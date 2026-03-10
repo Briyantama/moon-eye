@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: moon_eye_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+
+      - name: Backend deps
+        working-directory: ./backend
+        run: |
+          if [ -f go.mod ]; then
+            go mod tidy
+          fi
+
+      - name: Backend tests
+        working-directory: ./backend
+        env:
+          DB_URL: postgres://postgres:postgres@localhost:5432/moon_eye_test?sslmode=disable
+        run: |
+          if [ -f go.mod ]; then
+            go test ./...
+          else
+            echo "No Go backend yet, skipping tests"
+          fi
+
+      - name: Web install & lint
+        working-directory: ./web
+        run: |
+          if [ -f package.json ]; then
+            npm install
+            npm run lint --if-present
+            npm test --if-present
+          else
+            echo "No web app yet, skipping"
+          fi
+
+      - name: Mobile analyze
+        working-directory: ./mobile
+        run: |
+          if [ -f pubspec.yaml ]; then
+            flutter pub get
+            flutter analyze
+            flutter test
+          else
+            echo "No mobile app yet, skipping"
+          fi
+
+      - name: Build backend Docker image
+        if: github.ref == 'refs/heads/main'
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+        run: |
+          if [ -z "$REGISTRY" ]; then
+            echo "REGISTRY secret not set, skipping docker build"
+            exit 0
+          fi
+          docker build -t "$REGISTRY/moon-eye-backend:latest" ./backend
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+          docker push "$REGISTRY/moon-eye-backend:latest"
+

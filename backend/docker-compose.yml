@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: finance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  finance-api:
+    build: .
+    environment:
+      SERVICE_NAME: finance-api
+      FINANCE_API_DATABASE_URL: postgres://postgres:postgres@postgres:5432/finance?sslmode=disable
+      FINANCE_API_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8080:8080"
+
+  auth-service:
+    build: .
+    environment:
+      SERVICE_NAME: auth-service
+    depends_on:
+      - postgres
+
+  sync-service:
+    build: .
+    environment:
+      SERVICE_NAME: sync-service
+    depends_on:
+      - postgres
+      - redis
+
+  worker-service:
+    build: .
+    environment:
+      SERVICE_NAME: worker-service
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  postgres-data: {}
+

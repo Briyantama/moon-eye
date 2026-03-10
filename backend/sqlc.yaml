@@ -1,0 +1,14 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema:
+      - "migrations"
+    queries:
+      - "internal/db/queries"
+    gen:
+      go:
+        package: "sqlcdb"
+        out: "internal/db/sqlc"
+        sql_package: "pgx/v5"
+        emit_interface: false
+
