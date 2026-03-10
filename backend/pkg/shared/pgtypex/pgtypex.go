@@ -22,7 +22,7 @@ func Float64FromNumeric(n pgtype.Numeric) (float64, error) {
 	if s == "" {
 		return 0, nil
 	}
-	f, err := strconv.ParseFloat(s, 64)
+	f, err := strconv.ParseFloat(s.(string), 64)
 	if err != nil {
 		return 0, err
 	}

@@ -20,6 +20,7 @@ import (
 // an optional pgx.Tx in each method.
 type PGXTransactionRepository struct {
 	pool *pgxpool.Pool
+	queries *sqlcdb.Queries
 }
 
 // NewPGXTransactionRepository constructs a new TransactionRepository backed by
@@ -32,7 +33,7 @@ func NewPGXTransactionRepository(pool *pgxpool.Pool) *PGXTransactionRepository {
 
 // NewTransactionRepository is the public constructor used by the repository
 // container. Uses the provided sqlc Queries when non-nil; otherwise builds from pool.
-func NewTransactionRepository(pool *pgxpool.Pool, q *Queries) TransactionRepository {
+func NewTransactionRepository(pool *pgxpool.Pool, q *sqlcdb.Queries) TransactionRepository {
 	if q != nil {
 		return &PGXTransactionRepository{pool: pool, queries: q}
 	}
@@ -43,7 +44,7 @@ func (r *PGXTransactionRepository) q(tx pgx.Tx) *sqlcdb.Queries {
 	if tx != nil {
 		return sqlcdb.New(tx)
 	}
-	return r.queries
+	return sqlcdb.New(r.pool)
 }
 
 // Create inserts a new transaction row and returns the created record.

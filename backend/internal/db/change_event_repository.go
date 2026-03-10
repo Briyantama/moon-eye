@@ -34,7 +34,7 @@ type SQLCChangeEventRepository struct {
 }
 
 // NewChangeEventRepository is the constructor used by the repository container.
-func NewChangeEventRepository(pool *pgxpool.Pool, _ *Queries) ChangeEventRepository {
+func NewChangeEventRepository(pool *pgxpool.Pool, _ *sqlcdb.Queries) ChangeEventRepository {
 	return &SQLCChangeEventRepository{pool: pool}
 }
 
