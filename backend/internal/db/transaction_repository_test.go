@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -19,14 +18,15 @@ func TestTransactionFilter_Defaults(t *testing.T) {
 		UserID: id,
 	}
 
-	// Using a nil repository is fine here; we only care that List can be
-	// called with a fully-populated filter type. The real behavior is
-	// exercised in integration tests.
-	var repo TransactionRepository = (*PGXTransactionRepository)(nil)
-
-	ctx := context.Background()
-	_, _ = repo.List(ctx, nil, filter) // compile-time interface satisfaction
+	// Verify filter type and that *PGXTransactionRepository satisfies the interface.
+	// Full tx vs pool behavior is exercised in integration tests.
+	require.NotEqual(t, uuid.Nil, filter.UserID)
+	var _ TransactionRepository = (*PGXTransactionRepository)(nil)
 }
+
+// NOTE: These tests focus on type-safety. More detailed tx vs pool behavior is
+// validated in integration tests where a real pgxpool and transactions are
+// available.
 
 func TestCreateUpdateParams_Types(t *testing.T) {
 	userID := uuid.Must(uuid.NewV4())

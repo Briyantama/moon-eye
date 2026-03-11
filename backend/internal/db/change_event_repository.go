@@ -11,6 +11,8 @@ import (
 	sqlcdb "moon-eye/backend/internal/db/sqlc"
 )
 
+//go:generate mockery --config=../../.mockery_v3.yml
+
 // ChangeEvent represents the minimal data needed to write a change_events row.
 type ChangeEvent struct {
 	EntityType string

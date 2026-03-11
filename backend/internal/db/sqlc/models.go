@@ -44,6 +44,29 @@ type ChangeEvent struct {
 	Deleted    bool
 }
 
+type MonthlyBalance struct {
+	UserID    pgtype.UUID
+	AccountID pgtype.UUID
+	MonthKey  string
+	Balance   pgtype.Numeric
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ProjectionCursor struct {
+	ProjectorName string
+	LastEventID   int64
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type RefreshToken struct {
+	ID             pgtype.UUID
+	UserID         pgtype.UUID
+	EncryptedToken string
+	ExpiresAt      pgtype.Timestamptz
+	Revoked        bool
+	CreatedAt      pgtype.Timestamptz
+}
+
 type SheetMapping struct {
 	ID           pgtype.UUID
 	ConnectionID pgtype.UUID
@@ -104,12 +127,23 @@ type Transaction struct {
 	Deleted      bool
 }
 
-type User struct {
-	ID          pgtype.UUID
-	Email       string
-	DisplayName pgtype.Text
-	CreatedAt   pgtype.Timestamptz
+type TransactionSummary struct {
+	UserID      pgtype.UUID
+	PeriodKey   string
+	Currency    string
+	Type        string
+	TotalAmount pgtype.Numeric
+	Count       int64
 	UpdatedAt   pgtype.Timestamptz
-	Version     int64
-	Deleted     bool
+}
+
+type User struct {
+	ID             pgtype.UUID
+	Email          string
+	DisplayName    pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	Version        int64
+	Deleted        bool
+	HashedPassword string
 }
