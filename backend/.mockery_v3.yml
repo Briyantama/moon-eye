@@ -1,0 +1,19 @@
+# All mocks go to one directory with package "mocks" so Go doesn't see mixed packages.
+dir: mocks
+pkgname: mocks
+filename: "mock_{{.InterfaceName | snakecase}}.go"
+
+packages:
+  moon-eye/backend/internal/db:
+    interfaces:
+      TransactionRepository:
+      ChangeEventRepository:
+
+  moon-eye/backend/internal/service:
+    interfaces:
+      SyncQueue:
+      TxManager:
+
+  moon-eye/backend/internal/sync:
+    interfaces:
+      SheetsClient:

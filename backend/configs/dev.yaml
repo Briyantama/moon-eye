@@ -1,0 +1,11 @@
+# Development config. Override with env vars: FINANCE_API_DATABASE_URL, etc.
+server:
+  addr: ":8080"
+database:
+  url: "postgres://postgres:postgres@localhost:5432/moon_eye?sslmode=disable"
+redis:
+  url: "redis://localhost:6379/0"
+auth:
+  jwtSecret: ""
+logging:
+  level: "debug"

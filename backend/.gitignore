@@ -1,0 +1,8 @@
+# Binaries
+*.exe
+bin/
+
+# IDE and env
+.idea/
+.env
+.env.local

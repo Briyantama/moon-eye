@@ -1,19 +1,196 @@
-backend
-=======
+# Moon Eye Backend
 
-Sync service and Redis Streams
-------------------------------
+Go backend for the Moon Eye finance app: REST APIs, auth, transactions, and Google Sheets sync. Built as **independent microservices** that share a common codebase and communicate via HTTP and Redis Streams.
 
-### sync\_queue contract
+**→ [Architecture diagram and modules](docs/ARCHITECTURE.md)** — system context, services, data flow, and codebase structure.
 
-The sync service and finance-api communicate via a Redis Stream named `sync_queue`. Entries on this stream use the following field schema:
+---
+
+## Architecture
+
+| Service | Port (default) | Description |
+|--------|----------------|--------------|
+| **finance-api** | `:8080` | Main API: transactions CRUD, auth (register/login/refresh), sheets connections, sync trigger. Runs migrations; health + metrics. |
+| **auth-service** | `:8081` | Dedicated auth service (JWT issuance, OAuth2) — stub for now; auth is currently in finance-api. |
+| **sync-service** | `:8082` | Consumes `sync_queue` from Redis; runs Google Sheets sync jobs (connections, mappings, change_events). |
+| **worker-service** | — | Projection worker: reads `change_events`, updates `transaction_summary` and `monthly_balance`. No HTTP server. |
+
+Shared components:
+
+- **PostgreSQL** — primary store (users, accounts, categories, transactions, change_events, sheets_connections, sheet_mappings).
+- **Redis** — stream `sync_queue` for async sync jobs; consumer group `sync_workers`.
+- **Config** — `configs/{APP_ENV}.yaml` + env overrides per service (e.g. `FINANCE_API_DATABASE_URL`).
+
+---
+
+## Prerequisites
+
+- **Go 1.22+**
+- **PostgreSQL 15+**
+- **Redis 6+** (optional for finance-api if you skip sync; required for sync-service)
+- **Make** (optional; for `make` targets below)
+
+---
+
+## How to Start
+
+### 1. Database and Redis
+
+Create a database and run migrations:
+
+```bash
+# Create DB (example for local Postgres)
+createdb moon_eye
+
+# Run migrations (from backend directory)
+export DATABASE_URL="postgres://postgres:postgres@localhost:5432/moon_eye?sslmode=disable"
+make migrate
+```
+
+Use a `configs/dev.yaml` (see [Configuration](#configuration)) or set env vars so that `database.url` points to your Postgres and (if needed) `redis.url` to Redis.
+
+### 2. Configuration
+
+Config is loaded from `configs/{APP_ENV}.yaml` (default `APP_ENV=dev` → `configs/dev.yaml`).  
+Each service uses its own **env prefix** for overrides (see `configs/dev.yaml`):
+
+- finance-api: `FINANCE_API_*` (e.g. `FINANCE_API_DATABASE_URL`, `FINANCE_API_SERVER_ADDR`)
+- auth-service: `AUTH-SERVICE_*`
+- sync-service: `SYNC-SERVICE_*`
+- worker-service: `WORKER-SERVICE_*`
+
+Example `configs/dev.yaml` (create from this if missing):
+
+```yaml
+server:
+  addr: ":8080"
+database:
+  url: "postgres://postgres:postgres@localhost:5432/moon_eye?sslmode=disable"
+redis:
+  url: "redis://localhost:6379/0"
+auth:
+  jwtSecret: "your-secret"
+logging:
+  level: "debug"
+```
+
+Override per service, e.g.:
+
+```bash
+export FINANCE_API_DATABASE_URL="postgres://..."
+export FINANCE_API_SERVER_ADDR=":8080"
+export FINANCE_API_REDIS_URL="redis://localhost:6379/0"
+export JWT_SIGNING_KEY="your-secret"   # or set auth.jwtSecret in config
+```
+
+### 3. Run with Make (recommended)
+
+From the **backend** directory:
+
+```bash
+# Run one service
+make run-finance-api    # :8080
+make run-auth-service   # :8081
+make run-sync-service   # :8082
+make run-worker-service # projections only
+
+# Run all services (each in background)
+make run-all
+```
+
+These targets set `APP_ENV=dev`, use `configs/dev.yaml`, and override `SERVER_ADDR` per service so ports don’t clash.
+
+### 4. Run without Make
+
+From the **backend** directory, with config and env set:
+
+```bash
+export APP_ENV=dev
+
+# Finance API (transactions, auth, health, metrics)
+go run ./cmd/api/finance-api
+
+# Auth service (stub)
+go run ./cmd/api/auth-service
+
+# Sync service (Redis consumer + HTTP health)
+go run ./cmd/api/sync-service
+
+# Worker service (projections only)
+go run ./cmd/api/worker-service
+```
+
+Set `*_DATABASE_URL`, `*_REDIS_URL`, and `*_SERVER_ADDR` per service if you’re not using `configs/dev.yaml`.
+
+### 5. Docker
+
+Build all binaries and run one service via `SERVICE_NAME`:
+
+```bash
+docker build -t moon-eye-backend .
+docker run --rm -e SERVICE_NAME=finance-api \
+  -e FINANCE_API_DATABASE_URL="postgres://..." \
+  -e FINANCE_API_REDIS_URL="redis://..." \
+  -p 8080:8080 moon-eye-backend
+```
+
+For a full local stack (Postgres, Redis, services), use your existing `docker-compose` setup.
+
+---
+
+## Makefile Targets
+
+| Target | Description |
+|--------|--------------|
+| `make run-finance-api` | Start finance-api on `:8080` |
+| `make run-auth-service` | Start auth-service on `:8081` |
+| `make run-sync-service` | Start sync-service on `:8082` |
+| `make run-worker-service` | Start worker-service (no HTTP) |
+| `make run-all` | Start all four in the background |
+| `make build` | Build finance-api binary |
+| `make build-all` | Build all service binaries |
+| `make test` | Run unit tests |
+| `make test-integration` | Run integration tests (Docker) |
+| `make migrate` | Run DB migrations (requires `DATABASE_URL`) |
+| `make docker-build` | Build Docker image |
+| `make clean` | Remove built binaries |
+
+---
+
+## Testing
+
+- **Unit tests** (no Docker):
+
+  ```bash
+  go test ./...
+  # or
+  make test
+  ```
+
+- **Integration tests** (PostgreSQL via testcontainers; requires Docker):
+
+  ```bash
+  INTEGRATION_DB=1 go test -tags=integration ./tests/integration -v
+  # or
+  make test-integration
+  ```
+
+Run from the `backend` directory. Migrations are applied automatically against an ephemeral Postgres 15 container.
+
+---
+
+## Sync Service and Redis Streams
+
+### sync_queue contract
+
+The sync service and finance-api communicate via a Redis Stream named `sync_queue`. Entries use:
 
 - **entity**: logical entity type, e.g. `transaction` or `account`.
-- **operation**: operation name, e.g. `create`, `update`, `delete`, or `full_sync`.
+- **operation**: e.g. `create`, `update`, `delete`, or `full_sync`.
 - **payload**: JSON-encoded job payload.
-- **retry_count**: integer count of processing attempts (optional, defaults to 0).
+- **retry_count**: integer (optional, default 0).
 
-The job payload for transaction syncs follows this shape:
+Example job payload for transaction syncs:
 
 ```json
 {
@@ -24,79 +201,34 @@ The job payload for transaction syncs follows this shape:
 }
 ```
 
-This structure is consumed by `SyncService` via the `SyncJobPayload` type and produced by services such as `TransactionService` through their `SyncQueue` abstraction.
+Consumed by `SyncService` via `SyncJobPayload`; produced by `TransactionService` (and others) through the `SyncQueue` abstraction.
 
-The sync worker uses a Redis consumer group named `sync_workers` attached to the `sync_queue` stream. Each sync-service instance uses a distinct consumer name (e.g. `sync-service`) to allow horizontal scaling.
+The sync worker uses consumer group `sync_workers` on stream `sync_queue`. Each sync-service instance uses a distinct consumer name (e.g. `sync-service`) for horizontal scaling.
 
 ### Sync service behavior
 
-The sync service is implemented in `cmd/api/sync-service/main.go` and uses:
+- **Config**: `pkg/shared/config` (DB URL, Redis URL, server address).
+- **DB**: `pgxpool.Pool` via `pkg/shared/db`.
+- **Redis**: `pkg/shared/redisx`; `internal/queue.RedisStreamQueue` for `sync_queue` + group `sync_workers`.
+- **Worker**: `internal/worker.Runner` consumes jobs and calls sync domain logic.
 
-- `pkg/shared/config` to load environment-specific configuration (DB URL, Redis URL, server address).
-- `pkg/shared/db` to create a `pgxpool.Pool` for Postgres.
-- `pkg/shared/redisx` to create and verify a Redis client.
-- `internal/queue.RedisStreamQueue` to connect to the `sync_queue` stream with the `sync_workers` group.
-- `internal/worker.Runner` to consume jobs and invoke the sync domain service.
+Domain sync lives under `internal/sync`:
 
-The domain layer for sync lives under `internal/sync`:
-
-- `SheetsClient` abstraction with a `NoopSheetsClient` implementation for local/dev use.
-- `SyncService` orchestrating:
-  - Loading `sheets_connections` and `sheet_mappings` via repositories in `internal/db/sync_repositories.go`.
-  - Reading relevant `change_events` via `PGChangeEventReader`.
-  - Converting local transaction events into `SheetRowChange` instances.
-  - Fetching remote changes from `SheetsClient` (currently a stub).
-  - Applying local changes to Google Sheets using `SheetsClient.ApplyChanges`.
-
-Worker behavior is implemented via:
-
-- `internal/queue.RedisStreamQueue.Consume` which:
-  - Ensures the `sync_workers` consumer group exists.
-  - Uses `XREADGROUP` in a loop with a configurable block timeout.
-  - Acknowledges messages (`XACK`) only after the handler succeeds.
-  - Leaves failed messages pending in Redis for later retries.
-- `internal/worker.Runner.Start` which:
-  - Wraps the queue consumption with logging.
-  - Measures per-job duration.
-  - Applies a simple exponential backoff (`1 + retry_count` seconds) before returning an error, allowing Redis pending-entry semantics to drive retries.
-
-### Local development
-
-The `docker-compose.yml` file runs Postgres, Redis, and the various backend services, including `sync-service`. To start a local stack:
-
-```bash
-docker-compose up --build
-```
-
-Key configuration values for the sync service:
-
-- **Database URL**: `SYNC-SERVICE_DATABASE_URL` (overrides `database.url` from `configs/{env}.yaml`).
-- **Redis URL**: `SYNC-SERVICE_REDIS_URL` (overrides `redis.url` from `configs/{env}.yaml`).
-- **Server address**: `SYNC-SERVICE_SERVER_ADDR` (overrides `server.addr` from `configs/{env}.yaml`).
-
-The sync service exposes:
-
-- `GET /health` – checks Postgres and Redis connectivity.
-- (Future) `/api/v1/sheets` and `/api/v1/sync` endpoints for managing connections and triggering manual syncs.
+- `SheetsClient` (e.g. `NoopSheetsClient` for dev).
+- `SyncService`: loads connections/mappings, reads `change_events`, converts to `SheetRowChange`, fetches/applies changes via `SheetsClient`.
 
 ### Dataflow
 
-The high-level Google Sheets sync flow is:
-
 ```mermaid
 flowchart LR
-  financeAPI[financeApi] --> syncQueue[RedisStream_sync_queue]
-  syncQueue --> syncServiceWorker[syncServiceWorker]
+  financeAPI[finance-api] --> syncQueue[Redis sync_queue]
+  syncQueue --> syncServiceWorker[sync-service worker]
   syncServiceWorker --> syncService[SyncService]
   syncService --> postgres[Postgres]
   syncService --> sheetsClient[GoogleSheetsClient]
-  sheetsClient --> googleSheets[GoogleSheets]
+  sheetsClient --> googleSheets[Google Sheets]
 ```
 
-In words:
-
-- `finance-api` (and other writers) enqueue sync jobs to the Redis Stream `sync_queue`.
-- The sync service's worker consumes jobs from `sync_queue` via a consumer group.
-- `SyncService` orchestrates reads from Postgres and Google Sheets.
-- Changes are written back to Postgres (via existing repositories/services) and to Google Sheets via the pluggable `SheetsClient` implementation.
-
+- finance-api (and other writers) enqueue jobs to `sync_queue`.
+- sync-service consumes via the consumer group and runs `SyncService`.
+- SyncService reads from Postgres and (when configured) Google Sheets and writes back via repositories and `SheetsClient`.
