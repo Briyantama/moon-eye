@@ -6,7 +6,7 @@ bin/
 .idea/
 .env
 .env.local
+backend/.cursor/
 .cursor/
-.cursor/rules/
 nul
 .cursor/rules/golang-backend.mdc
