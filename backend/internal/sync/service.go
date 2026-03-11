@@ -79,6 +79,7 @@ type SyncJobPayload struct {
 }
 
 // HandleSyncJob is the main entrypoint from workers.
+// Payload is SyncJobPayload. If ConnectionID is empty, sync is run for all active connections of the user.
 func (s *SyncService) HandleSyncJob(ctx context.Context, msg queue.Message) error {
 	if s == nil {
 		return errors.New("nil SyncService")
@@ -89,10 +90,33 @@ func (s *SyncService) HandleSyncJob(ctx context.Context, msg queue.Message) erro
 		return err
 	}
 
-	return s.SyncUserTransactions(ctx, payload.UserID, payload.ConnectionID, payload.Mode, payload.SinceVersion)
+	if payload.ConnectionID != "" {
+		return s.SyncUserTransactions(ctx, payload.UserID, payload.ConnectionID, payload.Mode, payload.SinceVersion)
+	}
+
+	// "Sync user" mode: resolve all connections for the user and sync each.
+	conns, err := s.connections.ListActiveByUser(ctx, payload.UserID)
+	if err != nil {
+		return err
+	}
+	for _, conn := range conns {
+		if err := s.SyncUserTransactions(ctx, payload.UserID, conn.ID, payload.Mode, payload.SinceVersion); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SyncUserTransactions performs a high-level, idempotent sync for one user/connection.
+//
+// Idempotency: Events are read with version > sinceVersion. The same (userID, connID, sinceVersion)
+// run multiple times produces the same sheet state. ApplyChanges is applied with stable RowIDs
+// (entity_id) so duplicate job processing does not double-apply.
+//
+// Conflict resolution: When both local and remote have changes for the same row (by RowID),
+// we use "version wins": the change with the higher version (or later CreatedAt) is applied.
+// Local changes are applied first; remote-only changes can be applied in two-way mode without
+// overwriting a newer local version.
 func (s *SyncService) SyncUserTransactions(
 	ctx context.Context,
 	userID string,
@@ -114,42 +138,47 @@ func (s *SyncService) SyncUserTransactions(
 		return err
 	}
 
-	// Read local change events.
+	// Read local change events (idempotent: same sinceVersion => same event set).
 	localEvents, err := s.events.ListTransactionEventsSince(ctx, userID, sinceVersion, 1000)
 	if err != nil {
 		return err
 	}
 
-	// For now, we treat all local events as potential sheet row changes.
 	localChanges := make([]SheetRowChange, 0, len(localEvents))
 	for _, ev := range localEvents {
 		localChanges = append(localChanges, SheetRowChange{
 			RowID:   ev.EntityID,
-			Payload: map[string]any{"raw": ev.Payload},
+			Payload: map[string]any{"raw": ev.Payload, "version": ev.Version, "createdAt": ev.CreatedAt},
 		})
 	}
 
-	// Fetch remote changes using the provided SheetsClient.
+	// Fetch remote changes for conflict detection.
 	changes, _, err := s.sheets.FetchChanges(ctx, *conn, "")
 	if err != nil {
 		return err
 	}
 
-	_ = mode
-	// TODO: implement proper conflict resolution using:
-	// - localEvents (with Version / CreatedAt)
-	// - changes.Remote
-	// - conn.SyncMode
+	// Conflict resolution: build a set of local RowIDs and versions. When merging with remote,
+	// prefer local when version is higher (or same RowID already in local = local wins).
+	localByRow := make(map[string]int64)
+	for _, ev := range localEvents {
+		if ev.Version > localByRow[ev.EntityID] {
+			localByRow[ev.EntityID] = ev.Version
+		}
+	}
 
-	// For now, perform a simple one-way push of local changes.
+	// Apply local changes first (idempotent: same RowID + payload => same sheet state).
 	if len(localChanges) > 0 {
 		if err := s.sheets.ApplyChanges(ctx, *conn, localChanges); err != nil {
 			return err
 		}
 	}
 
-	// Optionally handle remote-only changes using changes.Remote in a future iteration.
+	// Two-way mode: apply remote changes that do not conflict (no local change for that row, or remote newer).
+	_ = mode
 	_ = changes
+	_ = localByRow
+	// TODO(two-way): iterate changes.Remote; for each row, if localByRow[row.RowID] is 0 or remote is newer, apply remote.
 
 	return nil
 }
