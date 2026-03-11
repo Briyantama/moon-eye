@@ -5,28 +5,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
-
+	sharedauth "moon-eye/backend/pkg/shared/auth"
 	"moon-eye/backend/pkg/shared/httpx"
 )
 
-type contextKey string
-
-const (
-	userIDKey contextKey = "userID"
-	emailKey  contextKey = "email"
-)
-
-// Claims represents JWT claims required by backend services.
-type Claims struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	jwt.RegisteredClaims
-}
-
-// JWTMiddleware validates Bearer tokens and injects identity into the request context.
-// secret should be provided via configuration (e.g. shared config.Auth.JWTSecret).
-func JWTMiddleware(secret string) func(http.Handler) http.Handler {
+// JWTMiddleware validates Bearer tokens using pkg/shared/auth.Verify (JWT_SIGNING_KEY)
+// and injects userID and email into the request context.
+func JWTMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -34,51 +19,30 @@ func JWTMiddleware(secret string) func(http.Handler) http.Handler {
 				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "missing Authorization header")
 				return
 			}
-
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid Authorization header")
 				return
 			}
-
-			tokenStr := parts[1]
-
-			token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-				// TODO: support asymmetric keys if required by auth-service.
-				return []byte(secret), nil
-			})
-			if err != nil || !token.Valid {
+			userID, email, err := sharedauth.Verify(parts[1])
+			if err != nil {
 				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid token")
 				return
 			}
-
-			claims, ok := token.Claims.(*Claims)
-			if !ok {
-				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid token claims")
-				return
-			}
-
-			ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
-			ctx = context.WithValue(ctx, emailKey, claims.Email)
-
+			ctx := sharedauth.WithUserID(r.Context(), userID)
+			ctx = sharedauth.WithEmail(ctx, email)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// UserIDFromContext extracts the user ID from request context.
+// UserIDFromContext returns the user ID from context. Re-export from shared auth for convenience.
 func UserIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(userIDKey).(string); ok {
-		return v
-	}
-	return ""
+	return sharedauth.UserIDFromContext(ctx)
 }
 
-// EmailFromContext extracts the email from request context.
+// EmailFromContext returns the email from context. Re-export from shared auth for convenience.
 func EmailFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(emailKey).(string); ok {
-		return v
-	}
-	return ""
+	return sharedauth.EmailFromContext(ctx)
 }
 
