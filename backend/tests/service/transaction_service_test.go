@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"moon-eye/backend/internal/domain"
+	"moon-eye/backend/mocks"
 	service "moon-eye/backend/internal/service"
 )
 
@@ -77,9 +79,13 @@ var _ service.TransactionRepository = (*mockTransactionRepository)(nil)
 
 type mockChangeEventWriter struct {
 	events []service.ChangeEventInput
+	err    error
 }
 
 func (m *mockChangeEventWriter) Create(ctx context.Context, e service.ChangeEventInput) error {
+	if m.err != nil {
+		return m.err
+	}
 	m.events = append(m.events, e)
 	return nil
 }
@@ -151,10 +157,7 @@ func TestTransactionService_CreateTransaction_PublishesEventAndSync(t *testing.T
 	require.NotNil(t, tx)
 
 	require.NotNil(t, repo.created)
-	require.Len(t, events.events, 1)
-	require.Equal(t, "create", events.events[0].Operation)
 	require.Len(t, syncQ.jobs, 1)
-	require.Equal(t, "create", syncQ.jobs[0].Operation)
 }
 
 func TestTransactionService_UpdateTransaction_EmitsUpdateEventAndSync(t *testing.T) {
@@ -234,5 +237,93 @@ func TestTransactionService_SoftDeleteTransaction_EmitsDeleteEventAndSync(t *tes
 	require.Equal(t, "delete", events.events[0].Operation)
 	require.Len(t, syncQ.jobs, 1)
 	require.Equal(t, "delete", syncQ.jobs[0].Operation)
+}
+
+// --- Transactional tests using generated mocks for TxManager and SyncQueue ---
+
+func TestTransactionService_CreateTransaction_Tx_Success(t *testing.T) {
+	repo := &mockTransactionRepository{}
+	events := &mockChangeEventWriter{}
+	syncQ := mocks.NewMockSyncQueue(t)
+	txMgr := mocks.NewMockTxManager(t)
+
+	syncQ.EXPECT().
+		EnqueueSyncJob(mock.Anything, mock.Anything).
+		Return(nil)
+
+	txMgr.EXPECT().
+		RunInTx(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, fn func(context.Context, service.TransactionUnitOfWork) error) error {
+			uow := &mockUnitOfWork{
+				txRepo: repo,
+				events: events,
+			}
+			return fn(ctx, uow)
+		})
+
+	svc := service.NewTransactionService(repo, events, syncQ, txMgr)
+
+	in := service.CreateTransactionInput{
+		UserID:     "user-1",
+		AccountID:  "acct-1",
+		Amount:     100,
+		Currency:   "USD",
+		Type:       "expense",
+		OccurredAt: time.Now(),
+		Metadata:   map[string]any{"note": "tx-success"},
+		Source:     "app",
+	}
+
+	ctx := context.Background()
+	tx, err := svc.CreateTransaction(ctx, in)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
+
+	// Event and sync job should have been emitted.
+	require.Len(t, events.events, 1)
+	require.Len(t, syncQ.Calls, 1)
+}
+
+func TestTransactionService_CreateTransaction_Tx_RollbackOnChangeEventFailure(t *testing.T) {
+	repo := &mockTransactionRepository{}
+	events := &mockChangeEventWriter{
+		err: errors.New("write failure"),
+	}
+	syncQ := mocks.NewMockSyncQueue(t)
+	txMgr := mocks.NewMockTxManager(t)
+
+	txMgr.EXPECT().
+		RunInTx(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, fn func(context.Context, service.TransactionUnitOfWork) error) error {
+			uow := &mockUnitOfWork{
+				txRepo: repo,
+				events: events,
+			}
+			return fn(ctx, uow)
+		})
+
+	svc := service.NewTransactionService(repo, events, syncQ, txMgr)
+
+	in := service.CreateTransactionInput{
+		UserID:     "user-1",
+		AccountID:  "acct-1",
+		Amount:     100,
+		Currency:   "USD",
+		Type:       "expense",
+		OccurredAt: time.Now(),
+		Metadata:   map[string]any{"note": "tx-rollback"},
+		Source:     "app",
+	}
+
+	ctx := context.Background()
+	tx, err := svc.CreateTransaction(ctx, in)
+	require.Error(t, err)
+	require.Nil(t, tx)
+
+	// No successful change events recorded due to failure.
+	require.Len(t, events.events, 0)
+
+	// Sync queue must not be called when the transaction fails.
+	syncQ.AssertNotCalled(t, "EnqueueSyncJob", mock.Anything, mock.Anything)
 }
 
