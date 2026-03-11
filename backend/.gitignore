@@ -7,4 +7,6 @@ bin/
 .env
 .env.local
 .cursor/
+.cursor/rules/
 nul
+.cursor/rules/golang-backend.mdc
