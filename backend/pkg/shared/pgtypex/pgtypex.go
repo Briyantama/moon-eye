@@ -1,7 +1,7 @@
 package pgtypex
 
 import (
-	"strconv"
+	"math/big"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -18,14 +18,24 @@ func NumericFromFloat64(f float64) (pgtype.Numeric, error) {
 
 // Float64FromNumeric converts pgtype.Numeric into float64.
 func Float64FromNumeric(n pgtype.Numeric) (float64, error) {
-	s := n.String()
-	if s == "" {
+	if !n.Valid || n.NaN {
 		return 0, nil
 	}
-	f, err := strconv.ParseFloat(s.(string), 64)
-	if err != nil {
-		return 0, err
+
+	// Start with the integer coefficient.
+	r := new(big.Rat).SetInt(n.Int)
+
+	// Apply the base‑10 exponent.
+	if n.Exp < 0 {
+		den := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-n.Exp)), nil)
+		r.Quo(r, new(big.Rat).SetInt(den))
+	} else if n.Exp > 0 {
+		mul := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n.Exp)), nil)
+		r.Mul(r, new(big.Rat).SetInt(mul))
 	}
+
+	// Convert rational to float64 (may lose precision, which is acceptable here).
+	f, _ := r.Float64()
 	return f, nil
 }
 
