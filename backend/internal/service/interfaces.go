@@ -6,6 +6,8 @@ import (
 	"moon-eye/backend/internal/domain"
 )
 
+//go:generate mockery --config=../../.mockery_v3.yml
+
 // TransactionRepository abstracts persistence for transactions.
 // It is intentionally richer than the domain-level repository so the service
 // layer can express all required use cases (CRUD + pagination).

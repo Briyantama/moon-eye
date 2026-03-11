@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"moon-eye/backend/internal/domain"
+	"moon-eye/backend/pkg/shared/pagination"
 )
 
 // TransactionService implements application use cases around transactions.
@@ -27,7 +28,7 @@ func NewTransactionService(repo TransactionRepository, events ChangeEventWriter,
 }
 
 func (s *TransactionService) ListUserTransactions(ctx context.Context, userID string, limit, offset int) ([]domain.Transaction, error) {
-	limit, offset = normalizePagination(limit, offset)
+	limit, offset = pagination.Normalize(limit, offset)
 	return s.repo.ListByUser(ctx, userID, limit, offset)
 }
 
@@ -86,7 +87,7 @@ func (s *TransactionService) CreateTransaction(ctx context.Context, in CreateTra
 					EntityType: "transaction",
 					EntityID:   tx.ID,
 					UserID:     tx.UserID,
-					Operation:  "CREATE_TRANSACTION",
+					Operation:  "create",
 					Version:    tx.Version,
 					Payload:    payload,
 				}); err != nil {
@@ -100,13 +101,11 @@ func (s *TransactionService) CreateTransaction(ctx context.Context, in CreateTra
 		}
 	}
 
-	// TODO: marshal transaction payload more efficiently if needed.
-	payload, _ := json.Marshal(tx)
-
 	if s.syncQ != nil {
+		payload := syncPayloadForUser(tx.UserID, 0) // version 1 just created; sync from 0
 		_ = s.syncQ.EnqueueSyncJob(ctx, SyncJob{
 			Entity:    "transaction",
-			Operation: "CREATE_TRANSACTION",
+			Operation: "create",
 			Payload:   payload,
 		})
 	}
@@ -123,7 +122,7 @@ type PaginationResult struct {
 
 // ListUserTransactionsWithCount returns a page of transactions plus pagination metadata.
 func (s *TransactionService) ListUserTransactionsWithCount(ctx context.Context, userID string, limit, offset int) ([]domain.Transaction, PaginationResult, error) {
-	limit, offset = normalizePagination(limit, offset)
+	limit, offset = pagination.Normalize(limit, offset)
 
 	items, err := s.repo.ListByUser(ctx, userID, limit, offset)
 	if err != nil {
@@ -171,47 +170,89 @@ func (s *TransactionService) UpdateTransaction(ctx context.Context, userID, id s
 		return nil, err
 	}
 
-	// Apply updates. Business rules (e.g. allowed type transitions) would live
-	// here; for now we perform a straightforward overwrite of mutable fields.
-	existing.AccountID = in.AccountID
-	existing.Amount = in.Amount
-	if in.Currency != "" {
-		existing.Currency = in.Currency
+	applyUpdates := func(t *domain.Transaction) {
+		t.AccountID = in.AccountID
+		t.Amount = in.Amount
+		if in.Currency != "" {
+			t.Currency = in.Currency
+		}
+		if in.Type != "" {
+			t.Type = in.Type
+		}
+		t.CategoryID = in.CategoryID
+		t.Description = in.Description
+		t.OccurredAt = in.OccurredAt
+		t.Metadata = in.Metadata
+		if in.Source != "" {
+			t.Source = in.Source
+		}
+		t.LastModified = time.Now().UTC()
 	}
-	if in.Type != "" {
-		existing.Type = in.Type
-	}
-	existing.CategoryID = in.CategoryID
-	existing.Description = in.Description
-	existing.OccurredAt = in.OccurredAt
-	existing.Metadata = in.Metadata
-	if in.Source != "" {
-		existing.Source = in.Source
-	}
-	existing.LastModified = time.Now().UTC()
 
-	if err := s.repo.Update(ctx, existing); err != nil {
+	if s.txRunner == nil {
+		applyUpdates(existing)
+
+		if err := s.repo.Update(ctx, existing); err != nil {
+			return nil, err
+		}
+
+		payload, _ := json.Marshal(existing)
+
+		if s.events != nil {
+			_ = s.events.Create(ctx, ChangeEventInput{
+				EntityType: "transaction",
+				EntityID:   existing.ID,
+				UserID:     existing.UserID,
+				Operation:  "update",
+				Version:    existing.Version,
+				Payload:    payload,
+			})
+		}
+
+		if s.syncQ != nil {
+			_ = s.syncQ.EnqueueSyncJob(ctx, SyncJob{
+				Entity:    "transaction",
+				Operation: "update",
+				Payload:   syncPayloadForUser(existing.UserID, existing.Version-1),
+			})
+		}
+
+		return existing, nil
+	}
+
+	// Transactional path: ensure DB update and change_event write happen in a
+	// single transaction via TxManager / TransactionUnitOfWork.
+	if err := s.txRunner.RunInTx(ctx, func(txCtx context.Context, uow TransactionUnitOfWork) error {
+		applyUpdates(existing)
+
+		if err := uow.Transactions().Update(txCtx, existing); err != nil {
+			return err
+		}
+
+		if s.events != nil {
+			payload, _ := json.Marshal(existing)
+			if err := uow.ChangeEvents().Create(txCtx, ChangeEventInput{
+				EntityType: "transaction",
+				EntityID:   existing.ID,
+				UserID:     existing.UserID,
+				Operation:  "update",
+				Version:    existing.Version,
+				Payload:    payload,
+			}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}); err != nil {
 		return nil, err
-	}
-
-	payload, _ := json.Marshal(existing)
-
-	if s.events != nil {
-		_ = s.events.Create(ctx, ChangeEventInput{
-			EntityType: "transaction",
-			EntityID:   existing.ID,
-			UserID:     existing.UserID,
-			Operation:  "update",
-			Version:    existing.Version,
-			Payload:    payload,
-		})
 	}
 
 	if s.syncQ != nil {
 		_ = s.syncQ.EnqueueSyncJob(ctx, SyncJob{
 			Entity:    "transaction",
 			Operation: "update",
-			Payload:   payload,
+			Payload:   syncPayloadForUser(existing.UserID, existing.Version-1),
 		})
 	}
 
@@ -221,47 +262,80 @@ func (s *TransactionService) UpdateTransaction(ctx context.Context, userID, id s
 // SoftDeleteTransaction marks a transaction as deleted and emits a delete
 // change event and sync job.
 func (s *TransactionService) SoftDeleteTransaction(ctx context.Context, userID, id string) (*domain.Transaction, error) {
-	deleted, err := s.repo.SoftDelete(ctx, userID, id)
-	if err != nil {
-		return nil, err
+	if s.txRunner == nil {
+		deleted, err := s.repo.SoftDelete(ctx, userID, id)
+		if err != nil {
+			return nil, err
+		}
+
+		payload, _ := json.Marshal(deleted)
+
+		if s.events != nil {
+			_ = s.events.Create(ctx, ChangeEventInput{
+				EntityType: "transaction",
+				EntityID:   deleted.ID,
+				UserID:     deleted.UserID,
+				Operation:  "delete",
+				Version:    deleted.Version,
+				Payload:    payload,
+			})
+		}
+
+		if s.syncQ != nil {
+			_ = s.syncQ.EnqueueSyncJob(ctx, SyncJob{
+				Entity:    "transaction",
+				Operation: "delete",
+				Payload:   syncPayloadForUser(deleted.UserID, deleted.Version-1),
+			})
+		}
+
+		return deleted, nil
 	}
 
-	payload, _ := json.Marshal(deleted)
+	var deleted *domain.Transaction
 
-	if s.events != nil {
-		_ = s.events.Create(ctx, ChangeEventInput{
-			EntityType: "transaction",
-			EntityID:   deleted.ID,
-			UserID:     deleted.UserID,
-			Operation:  "delete",
-			Version:    deleted.Version,
-			Payload:    payload,
-		})
+	if err := s.txRunner.RunInTx(ctx, func(txCtx context.Context, uow TransactionUnitOfWork) error {
+		var err error
+		deleted, err = uow.Transactions().SoftDelete(txCtx, userID, id)
+		if err != nil {
+			return err
+		}
+
+		if s.events != nil {
+			payload, _ := json.Marshal(deleted)
+			if err := uow.ChangeEvents().Create(txCtx, ChangeEventInput{
+				EntityType: "transaction",
+				EntityID:   deleted.ID,
+				UserID:     deleted.UserID,
+				Operation:  "delete",
+				Version:    deleted.Version,
+				Payload:    payload,
+			}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	if s.syncQ != nil {
 		_ = s.syncQ.EnqueueSyncJob(ctx, SyncJob{
 			Entity:    "transaction",
 			Operation: "delete",
-			Payload:   payload,
+			Payload:   syncPayloadForUser(deleted.UserID, deleted.Version-1),
 		})
 	}
 
 	return deleted, nil
 }
 
-// normalizePagination enforces sane defaults and bounds for pagination
-// parameters.
-func normalizePagination(limit, offset int) (int, int) {
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return limit, offset
+// syncPayloadForUser returns JSON payload for sync-service (userId + sinceVersion).
+func syncPayloadForUser(userID string, sinceVersion int64) []byte {
+	b, _ := json.Marshal(map[string]interface{}{
+		"userId":       userID,
+		"sinceVersion": sinceVersion,
+	})
+	return b
 }
-
