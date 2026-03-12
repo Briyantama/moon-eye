@@ -67,7 +67,9 @@ func (s *TransactionService) CreateTransaction(ctx context.Context, in CreateTra
 		Version:      1,
 		LastModified: now,
 		Source:       in.Source,
-		Deleted:      false,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		DeletedAt:    time.Time{},
 	}
 
 	if s.txRunner == nil {

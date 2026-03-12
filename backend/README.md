@@ -232,3 +232,24 @@ flowchart LR
 - finance-api (and other writers) enqueue jobs to `sync_queue`.
 - sync-service consumes via the consumer group and runs `SyncService`.
 - SyncService reads from Postgres and (when configured) Google Sheets and writes back via repositories and `SheetsClient`.
+
+### Google Sheets credentials
+
+To use a real Google Sheets client instead of the no-op (e.g. in finance-api and worker-service), set one of:
+
+- **`GOOGLE_SHEETS_CREDENTIALS_JSON`** — raw or base64-encoded JSON of service account (or OAuth) credentials.
+- **`GOOGLE_APPLICATION_CREDENTIALS`** — path to a JSON key file.
+
+If neither is set, the backend uses `NoopSheetsClient` (sync jobs run but no sheet I/O). Two-way sync uses **version** first, then **createdAt** (LastModified) for conflict resolution; merges are idempotent.
+
+### Sync integration tests
+
+Sync integration tests live in `tests/integration/sync_google_sheets_test.go` and use a mock `SheetsClient` (no real Google API). They require Docker (Postgres via testcontainers). From the **backend** directory:
+
+```bash
+INTEGRATION_DB=1 go test -tags=integration ./tests/integration -run Sync -v
+# or
+make test-integration
+```
+
+Tests cover: creating a transaction, running `HandleSyncJob`, asserting local DB and that the mock received the expected `ApplyChanges`; and conflict resolution (version wins, then createdAt).

@@ -26,7 +26,7 @@ run-sync-service:
 	$(GO) run ./cmd/api/sync-service
 
 run-worker-service:
-	APP_ENV=$(APP_ENV) WORKER-SERVICE_DATABASE_URL="$(DATABASE_URL)" \
+	APP_ENV=$(APP_ENV) WORKER_SERVICE_DATABASE_URL="$(DATABASE_URL)" WORKER_SERVICE_REDIS_URL="$(REDIS_URL)" \
 	$(GO) run ./cmd/api/worker-service
 
 # Run all services in background. Ctrl+C kills make; background processes may need pkill.
@@ -35,7 +35,7 @@ run-all:
 	@(APP_ENV=$(APP_ENV) FINANCE_API_SERVER_ADDR=:8080 FINANCE_API_DATABASE_URL="$(DATABASE_URL)" FINANCE_API_REDIS_URL="$(REDIS_URL)" $(GO) run ./cmd/api/finance-api &); \
 	(APP_ENV=$(APP_ENV) AUTH-SERVICE_SERVER_ADDR=:8081 AUTH-SERVICE_DATABASE_URL="$(DATABASE_URL)" $(GO) run ./cmd/api/auth-service &); \
 	(APP_ENV=$(APP_ENV) SYNC-SERVICE_SERVER_ADDR=:8082 SYNC-SERVICE_DATABASE_URL="$(DATABASE_URL)" SYNC-SERVICE_REDIS_URL="$(REDIS_URL)" $(GO) run ./cmd/api/sync-service &); \
-	(APP_ENV=$(APP_ENV) WORKER-SERVICE_DATABASE_URL="$(DATABASE_URL)" $(GO) run ./cmd/api/worker-service &); \
+	(APP_ENV=$(APP_ENV) WORKER_SERVICE_DATABASE_URL="$(DATABASE_URL)" WORKER_SERVICE_REDIS_URL="$(REDIS_URL)" $(GO) run ./cmd/api/worker-service &); \
 	wait
 
 # ---- Build ----

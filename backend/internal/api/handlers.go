@@ -282,7 +282,9 @@ type transactionResponse struct {
 	LastModified time.Time          `json:"lastModified"`
 	Source       string             `json:"source"`
 	SheetsRowID  *string            `json:"sheetsRowId,omitempty"`
-	Deleted      bool               `json:"deleted"`
+	CreatedAt    time.Time          `json:"createdAt"`
+	UpdatedAt    time.Time          `json:"updatedAt"`
+	DeletedAt    time.Time          `json:"deletedAt"`
 }
 
 func mapTransactions(in []domain.Transaction) []transactionResponse {
@@ -313,7 +315,9 @@ func mapTransaction(t *domain.Transaction) transactionResponse {
 		LastModified: t.LastModified,
 		Source:       t.Source,
 		SheetsRowID:  t.SheetsRowID,
-		Deleted:      t.Deleted,
+		CreatedAt:    t.CreatedAt,
+		UpdatedAt:    t.UpdatedAt,
+		DeletedAt:    t.DeletedAt,
 	}
 }
 

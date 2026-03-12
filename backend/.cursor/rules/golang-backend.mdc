@@ -1,141 +1,163 @@
 ---
 alwaysApply: true
 ---
+# ARCHITECTURE OVERVIEW
 
-# Golang Backend Microservice Rules
+The backend is implemented as **stateless microservices**.
+Each service has a single responsibility and communicates with other services via:
 
-These rules enforce the backend architecture defined in `app.md`.
-All Go backend services must strictly follow these constraints.
+* REST APIs
+* asynchronous events using Redis Streams
 
-------------------------------------------------------------
-ARCHITECTURE RULES
-------------------------------------------------------------
+Design goals:
 
-- Backend must be implemented as **independent microservices**
-- Each service must be **stateless**
-- Services communicate via:
-  - REST APIs
-  - async messaging (Redis Streams / PubSub)
+* scalability
+* service isolation
+* resilience
+* easy deployment and upgrades
 
-Every service must contain:
+Every service must be **independent** and **Dockerized**. Services must **never access another service's database directly**; inter-service communication must occur via HTTP APIs or event queues.
 
-/cmd/api
-/internal
-/pkg
-/configs
-/scripts
-/migrations
+---
 
-Rules:
+## RECOMMENDED MICROSERVICES
 
-- `/cmd/api` contains service entrypoint
-- `/internal` contains private service logic
-- `/pkg` contains reusable shared libraries
-- services must not access another service database
-- inter-service communication only via HTTP or events
-- every service must be Dockerized
+### finance-api
 
-------------------------------------------------------------
-RECOMMENDED MICROSERVICES
-------------------------------------------------------------
-
-finance-api
-sync-service
-auth-service
-worker-service
+Primary domain service responsible for financial data.
 
 Responsibilities:
 
-finance-api
-- CRUD transactions
-- CRUD accounts
-- CRUD categories
+* CRUD transactions
+* CRUD accounts
+* CRUD categories
+* emit change events
+* enqueue sync jobs
 
-sync-service
-- Google Sheets sync
-- sheet mapping management
+## sync-service
 
-auth-service
-- JWT issuing
-- OAuth login
-- token lifecycle
+Responsible for **Google Sheets synchronization**.
 
-worker-service
-- queue processing
-- change event projections
-- background tasks
+Responsibilities:
 
-------------------------------------------------------------
-REQUIRED STACK
-------------------------------------------------------------
+* manage sheet connections
+* manage sheet mappings
+* push updates to Google Sheets
+* pull updates from Google Sheets
+* resolve sync conflicts
 
-HTTP Router
+## auth-service
 
-- github.com/go-chi/chi/v5
+Responsible for authentication and identity.
 
-Database
+Responsibilities:
 
-- PostgreSQL
+* JWT issuing
+* email login
+* Google OAuth login
+* refresh token lifecycle and revocation
 
-DB Access
+## worker-service
 
-- github.com/jackc/pgx/v5
-- github.com/jackc/pgx/v5/pgxpool
-- sqlc for query generation
+Responsible for background processing.
 
-Queue
+Responsibilities:
 
-- Redis Streams
-- github.com/redis/go-redis/v9
+* queue consumption
+* event projections
+* background jobs and retries
+* sync scheduling
 
-Config
+---
 
-- github.com/spf13/viper
+## REQUIRED STACK
 
-Logging
+## **HTTP Router**
 
-- go.uber.org/zap
+```bash
+github.com/go-chi/chi/v5
+```
 
-Validation
+## **Database**
 
-- github.com/go-playground/validator/v10
+```bash
+PostgreSQL
+```
 
-Auth
+## **DB Access**
 
-- github.com/golang-jwt/jwt/v5
-- golang.org/x/oauth2
+```bash
+github.com/jackc/pgx/v5
+github.com/jackc/pgx/v5/pgxpool
+sqlc
+```
 
-Tracing
+## **Queue**
 
-- go.opentelemetry.io/otel
+```bash
+Redis Streams
+github.com/redis/go-redis/v9
+```
 
-Metrics
+## **Config**
 
-- github.com/prometheus/client_golang/prometheus
+```bash
+github.com/spf13/viper
+```
 
-Migrations
+## **Logging**
 
-- github.com/golang-migrate/migrate
+```bash
+go.uber.org/zap
+```
 
-Testing
+## **Validation**
 
-- github.com/stretchr/testify
-- github.com/golang/mock (optional)
+```bash
+github.com/go-playground/validator/v10
+```
 
-Mock generation
+## **Authentication**
 
-- github.com/vektra/mockery/v2
+```bash
+github.com/golang-jwt/jwt/v5
+golang.org/x/oauth2
+```
 
-Container testing
+## **Tracing**
 
-- github.com/testcontainers/testcontainers-go
+```bash
+go.opentelemetry.io/otel
+```
 
-------------------------------------------------------------
+## **Metrics**
+
+```bash
+github.com/prometheus/client_golang/prometheus
+```
+
+## **Migrations**
+
+```bash
+github.com/golang-migrate/migrate
+```
+
+## **Testing**
+
+```bash
+github.com/stretchr/testify
+github.com/golang/mock
+github.com/vektra/mockery/v2
+github.com/testcontainers/testcontainers-go
+```
+
+---
+
 ## FOLDER STRUCTURE
-------------------------------------------------------------
 
-Each microservice must follow:
+Each microservice must follow this layout:
 
+```bash
 /backend
   /cmd/api
   /internal/api
@@ -150,146 +172,134 @@ Each microservice must follow:
   /migrations
   /configs
   /scripts
+```
 
 Rules:
 
-- HTTP handlers -> internal/api
-- auth middleware -> internal/auth
-- db models + queries -> internal/db
-- sync logic -> internal/sync
-- queue adapters -> internal/queue
-- background workers -> internal/worker
-- business logic -> internal/service
-- projections -> internal/service/projection
-- shared utilities -> pkg/shared
+* HTTP handlers → `internal/api`
+* Authentication middleware → `internal/auth`
+* Database queries + models → `internal/db`
+* Sync logic → `internal/sync`
+* Queue adapters → `internal/queue`
+* Business logic → `internal/service`
+* Projections → `internal/service/projection`
+* Workers → `internal/worker`
+* Shared utilities → `pkg/shared`
 
-Business logic must NEVER exist in handlers.
+Business logic must **never** live in handlers.
 
-------------------------------------------------------------
-SERVICE DESIGN RULES
-------------------------------------------------------------
+---
 
-Business logic must live inside services.
+## SERVICE DESIGN RULES
 
-Example:
-
-internal/service/transaction_service.go
+All business logic must live inside **services** (e.g., `internal/service/transaction_service.go`).
 
 Service responsibilities:
 
-- orchestrate business logic
-- call DB layer
-- emit events
-- enqueue sync jobs
-- enforce validation rules
+* orchestrate domain logic
+* validate business rules
+* call repositories
+* emit events
+* enqueue jobs
 
-Services must depend on interfaces rather than concrete implementations.
+Services must depend on **interfaces** rather than concrete implementations.
 
 Example:
 
+```go
 type TransactionRepository interface {
     Create(ctx context.Context, tx CreateTransactionParams) error
 }
+```
 
 Services must not depend on HTTP handlers.
 
-------------------------------------------------------------
-INTERFACE RULES (MANDATORY FOR TESTING)
-------------------------------------------------------------
+---
 
-External dependencies must be abstracted with interfaces.
+## INTERFACE RULES
 
-Required abstractions:
+External dependencies must be abstracted via interfaces (close to service layer).
 
-Database repositories
-Queue publishers
-External APIs
-Google Sheets client
+Examples:
 
-Example:
+* `TransactionRepository`
+* `AccountRepository`
+* `SyncQueue`
+* `SheetsClient`
+* `EventPublisher`
 
-TransactionRepository
-SyncQueue
-SheetsClient
+Preferred location:
 
-Interfaces must live close to the service layer.
-
-Example:
-
+```bash
 internal/service/interfaces.go
+```
 
-------------------------------------------------------------
-MOCKERY RULES
-------------------------------------------------------------
+---
 
-Mocks must be generated using Mockery.
+## MOCKERY RULES
 
-Command example:
+Mocks must be generated using **Mockery**.
 
+Example:
+
+```bash
 mockery --name=TransactionRepository --output=internal/mocks
+```
 
 Rules:
 
-- all service dependencies must have mock implementations
-- mocks must live in:
+* every service dependency must have a mock
+* mocks must live under `internal/mocks`
+* tests should prefer mocks over real dependencies
 
-internal/mocks
+Example `.mockery.yaml`:
 
-Example:
-
-internal/mocks/TransactionRepository.go
-
-Tests must use mocks instead of real dependencies whenever possible.
-
-Mockery configuration may live in:
-
-.mockery.yaml
-
-Example config:
-
+```yaml
 with-expecter: true
 dir: internal
 output: internal/mocks
+```
 
-------------------------------------------------------------
-HTTP HANDLER RULES
-------------------------------------------------------------
+---
 
-Handlers must remain thin.
+## HTTP HANDLER RULES
+
+Handlers must be **thin**.
 
 Allowed responsibilities:
 
-- parse request
-- validate payload
-- call service
-- return response
+* parse request
+* validate payload
+* call service
+* return response
 
 Handlers must NOT:
 
-- query database
-- implement business logic
-- perform sync operations
+* query the database
+* contain business logic
+* trigger sync operations
 
-Flow must always be:
+Flow:
 
-HTTP -> Handler -> Service -> DB
+```mermaid
+HTTP → Handler → Service → Repository → Database
+```
 
-------------------------------------------------------------
-DATABASE RULES
-------------------------------------------------------------
+---
 
-Database is PostgreSQL.
+## DATABASE RULES
 
-DB access must use:
+Database: **PostgreSQL**. Access via `pgx` + `sqlc`.
 
-pgx + sqlc.
+Queries should live in:
 
-Queries must live in:
-
+```bash
 internal/db/queries
+```
 
-Tables required:
+## Core tables
 
+```bash
 users
 accounts
 categories
@@ -298,267 +308,353 @@ change_events
 sheets_connections
 sheet_mappings
 sync_queue
+```
 
-Rules:
+Every table must include:
 
-- multi-write operations require transactions
-- every table must include:
-
+```bash
 id
 version
 created_at
 updated_at
 deleted
+```
 
-Updates must increment version.
+Rules:
 
-Soft deletes only:
+* updates must increment `version`
+* soft deletes only (`deleted = true`)
+* multi-write operations must use DB transactions
+* optimistic locking is required (check `version` on update)
 
-deleted = true
+---
 
-------------------------------------------------------------
-CHANGE EVENT SYSTEM
-------------------------------------------------------------
+## TRANSACTION DATA MODEL
 
-All mutations must write to change_events.
+`transactions` is the canonical source of financial mutations.
+
+Example fields:
+
+```bash
+id
+account_id
+category_id
+amount
+currency
+description
+version
+created_at
+updated_at
+deleted
+```
+
+Rules:
+
+* amounts must support positive and negative values
+* currency must use ISO codes
+* transactions are the authoritative source of financial activity
+
+---
+
+## CHANGE EVENT SYSTEM
+
+All mutations must write an immutable entry to `change_events` within the same DB transaction.
+
+Purpose:
+
+* event sourcing
+* projection updates
+* sync triggers
+* audit history
 
 Example schema fields:
 
+```bash
 entity_type
 entity_id
 operation
 version
 payload
 created_at
+```
 
 Operations:
 
+```bash
 CREATE
 UPDATE
 DELETE
+```
 
-Events trigger projections and sync.
+Events trigger projections and sync jobs.
 
-------------------------------------------------------------
-SYNC ARCHITECTURE
-------------------------------------------------------------
+---
 
-Google Sheets sync runs in background workers.
+## SYNC ARCHITECTURE (Google Sheets)
+
+Sync runs in background workers and must be non-blocking for API calls.
 
 Rules:
 
-- sync must be idempotent
-- retries must be safe
-- sync jobs pulled from sync_queue
+* sync must be idempotent
+* retries must be safe
+* sync jobs stored in `sync_queue`
+* conflict resolution:
+  1. compare `version`
+  2. use `last_modified` timestamp as fallback
+* local data must not be overwritten automatically; resolve conflicts via merge/alert
+* do not store OAuth tokens plaintext — encrypt or use a secrets manager
 
-Conflict resolution:
+Two-way sync mapping must be stored in `sheet_mappings` per workbook/sheet → entity mapping.
 
-1. version comparison
-2. last_modified timestamp
+---
 
-Sync must never block API responses.
+## QUEUE RULES
 
-------------------------------------------------------------
-QUEUE RULES
-------------------------------------------------------------
+Use **Redis Streams** as the queue mechanism.
 
-Queue must use Redis Streams.
+Queue layer:
 
-Queue layer lives in:
-
+```bash
 internal/queue
+```
 
-Required queues:
+Required streams:
 
+```bash
 sync_queue
 event_queue
+```
 
 Message schema:
 
-job_id
-entity
-operation
-payload
-retry_count
+```json
+{
+  "job_id": "uuid",
+  "entity": "transactions",
+  "operation": "UPDATE",
+  "payload": { },
+  "retry_count": 0,
+  "origin": "finance-api"
+}
+```
 
-Workers consume messages independently.
+Workers must process messages idempotently and acknowledge/trim properly.
 
-------------------------------------------------------------
-API DESIGN RULES
-------------------------------------------------------------
+---
 
-REST API only.
+## API DESIGN RULES
 
-Base prefix:
+REST-only API.
 
+Base path:
+
+```bash
 /api/v1
+```
 
 Endpoints:
 
+```bash
 /api/v1/transactions
 /api/v1/accounts
 /api/v1/categories
 /api/v1/sheets
 /api/v1/sync
+```
 
 Rules:
 
-- JSON only
-- camelCase JSON
-- pagination required
-- consistent error format
+* JSON only
+* camelCase JSON keys
+* pagination required on list endpoints
+* consistent error payload
 
 Example error:
 
+```json
 {
   "error": {
     "code": "string",
     "message": "string"
   }
 }
+```
 
-------------------------------------------------------------
-AUTHENTICATION RULES
-------------------------------------------------------------
+---
 
-JWT authentication required.
+## AUTHENTICATION RULES
+
+Use **JWT** for authentication.
 
 Protected endpoints require:
 
-Authorization: Bearer token
+```bash
+Authorization: Bearer <token>
+```
 
-Auth service must support:
+JWT must contain:
 
-- email login
-- Google OAuth2 login
-
-Security rules:
-
-- Google tokens must never be stored plaintext
-- refresh tokens must be encrypted
-- JWT must contain:
-
+```bash
 user_id
 email
 exp
+```
 
-------------------------------------------------------------
-OBSERVABILITY RULES
-------------------------------------------------------------
+Auth service must support:
 
-Each service must support:
+* email/password login (with secure password hashing)
+* Google OAuth login
+* refresh tokens and revocation
 
-Structured logging via Zap.
+Security:
 
-Metrics:
+* refresh tokens and OAuth tokens must be encrypted at rest
+* never log secrets or full PII
+* TLS required in production; consider mTLS between services
 
-Prometheus.
+---
 
-Tracing:
+## OBSERVABILITY RULES
 
-OpenTelemetry instrumentation for:
+Each service must expose structured logs, metrics, and traces.
 
-- HTTP
-- DB queries
-- external APIs
+### **Logging**
 
-------------------------------------------------------------
-CONFIGURATION RULES
-------------------------------------------------------------
+```bash
+zap (go.uber.org/zap)
+```
 
-Config must be environment based.
+### **Metrics**
 
-Load using:
+```bash
+Prometheus
+```
 
-Viper.
+### **Tracing**
+
+```bash
+OpenTelemetry (instrument HTTP, DB, external calls)
+```
+
+Expose metrics and traces for:
+
+* request latencies
+* DB errors
+* queue backlog
+* worker failures
+
+---
+
+## CONFIGURATION RULES
+
+Configuration must be environment-driven and loaded via **Viper**.
 
 Config directory:
 
+```bash
 /configs
+```
+
+Example files:
+
+```bash
+configs/dev.yaml
+configs/prod.yaml
+```
+
+Environment variables override file configuration.
+
+---
+
+## HEALTH & LIFECYCLE
+
+Every service must expose:
+
+```bash
+GET /health
+```
+
+Health checks should validate:
+
+* PostgreSQL connectivity
+* Redis connectivity
+
+Servers must support:
+
+* graceful shutdown
+* context cancellation
+* request timeouts
+* draining active requests on shutdown
+
+---
+
+## DOCKER RULES
+
+Every service must include a `Dockerfile`.
+
+Docker requirements:
+
+* multi-stage build
+* minimal runtime image (e.g., `golang:1.22-alpine` for build + distroless for runtime)
+
+Provide a `docker-compose.dev.yml` for local development including Postgres and Redis.
+
+---
+
+## PROJECTION / READ MODEL
+
+Heavy read queries should be served by projections (read models).
+
+Projection location:
+
+```bash
+internal/service/projection
+```
 
 Examples:
 
-configs/dev.yaml
-configs/prod.yaml
-
-Environment variables override config.
-
-------------------------------------------------------------
-HEALTH + LIFECYCLE
-------------------------------------------------------------
-
-Each service must expose:
-
-GET /health
-
-Health check verifies:
-
-- PostgreSQL connection
-- Redis connection
-
-Server must support:
-
-- graceful shutdown
-- context cancellation
-- request timeouts
-
-------------------------------------------------------------
-DOCKER RULES
-------------------------------------------------------------
-
-Each service must include:
-
-Dockerfile
-
-Docker rules:
-
-- multi-stage build
-- minimal runtime image
-
-Example base:
-
-golang:1.22-alpine
-
-------------------------------------------------------------
-PROJECTION / READ MODEL
-------------------------------------------------------------
-
-Heavy read queries must use projections.
-
-Projection logic location:
-
-internal/service/projection
-
-Example projections:
-
-transaction_summary
-monthly_balance
+* `transaction_summary`
+* `monthly_balance`
 
 Rules:
 
-- projections updated from change_events
-- projections run in workers
-- eventual consistency allowed
+* projections updated from `change_events`
+* projections run in workers
+* eventual consistency is acceptable
 
-------------------------------------------------------------
-TESTING RULES
-------------------------------------------------------------
+---
 
-Tests required for:
+## TESTING RULES
 
-- services
-- repositories
-- sync logic
-- workers
+Tests must cover:
+
+* services
+* repositories
+* workers
+* sync logic
 
 Testing stack:
 
+```bash
 testify
 mockery
 testcontainers
+```
 
 Rules:
 
-- unit tests must mock dependencies
-- integration tests must use containerized DB
-- tests must not depend on external services
+* unit tests must mock dependencies
+* integration tests must use containerized DB/Redis
+* tests must not depend on external third-party services (use fixtures or recorded responses)
+
+---
+
+## NON-FUNCTIONAL GUIDELINES
+
+* Latency targets (example): p95 < 200ms for reads; writes < 500ms depending on DB constraints.
+* Back-pressure: monitor queue length and implement circuit-breakers for external APIs (Google).
+* Security & compliance: enforce data retention and audit policies in `configs/prod.yaml`.
+* Backups: schedule regular Postgres backups and test restore procedures.
+
+---

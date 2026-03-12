@@ -20,7 +20,9 @@ SELECT
   op_type,
   version,
   payload,
-  created_at
+  created_at,
+  updated_at,
+  deleted_at
 FROM change_events
 WHERE id = $1
 `
@@ -34,6 +36,8 @@ type GetChangeEventByIDRow struct {
 	Version    int64
 	Payload    []byte
 	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	DeletedAt  pgtype.Timestamptz
 }
 
 func (q *Queries) GetChangeEventByID(ctx context.Context, id int64) (GetChangeEventByIDRow, error) {
@@ -48,6 +52,8 @@ func (q *Queries) GetChangeEventByID(ctx context.Context, id int64) (GetChangeEv
 		&i.Version,
 		&i.Payload,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -60,9 +66,11 @@ INSERT INTO change_events (
   op_type,
   version,
   payload,
-  created_at
+  created_at,
+  updated_at,
+  deleted_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, NOW()
+  $1, $2, $3, $4, $5, $6, NOW(), NOW(), NULL
 )
 `
 
@@ -96,7 +104,9 @@ SELECT
   op_type,
   version,
   payload,
-  created_at
+  created_at,
+  updated_at,
+  deleted_at
 FROM change_events
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2
@@ -116,6 +126,8 @@ type ListChangeEventsRow struct {
 	Version    int64
 	Payload    []byte
 	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	DeletedAt  pgtype.Timestamptz
 }
 
 func (q *Queries) ListChangeEvents(ctx context.Context, arg ListChangeEventsParams) ([]ListChangeEventsRow, error) {
@@ -136,6 +148,8 @@ func (q *Queries) ListChangeEvents(ctx context.Context, arg ListChangeEventsPara
 			&i.Version,
 			&i.Payload,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -15,8 +15,8 @@ type Account struct {
 	Currency  string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
 	Version   int64
-	Deleted   bool
 }
 
 type Category struct {
@@ -26,9 +26,9 @@ type Category struct {
 	IsIncome  bool
 	ParentID  pgtype.UUID
 	CreatedAt pgtype.Timestamptz
-	Version   int64
 	UpdatedAt pgtype.Timestamptz
-	Deleted   bool
+	DeletedAt pgtype.Timestamptz
+	Version   int64
 }
 
 type ChangeEvent struct {
@@ -41,7 +41,7 @@ type ChangeEvent struct {
 	Version    int64
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
-	Deleted    bool
+	DeletedAt  pgtype.Timestamptz
 }
 
 type MonthlyBalance struct {
@@ -49,13 +49,17 @@ type MonthlyBalance struct {
 	AccountID pgtype.UUID
 	MonthKey  string
 	Balance   pgtype.Numeric
+	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
 }
 
 type ProjectionCursor struct {
 	ProjectorName string
 	LastEventID   int64
+	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
 }
 
 type RefreshToken struct {
@@ -65,6 +69,8 @@ type RefreshToken struct {
 	ExpiresAt      pgtype.Timestamptz
 	Revoked        bool
 	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
 }
 
 type SheetMapping struct {
@@ -74,8 +80,9 @@ type SheetMapping struct {
 	DbField      string
 	Transform    []byte
 	Version      int64
+	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
-	Deleted      bool
+	DeletedAt    pgtype.Timestamptz
 }
 
 type SheetsConnection struct {
@@ -90,9 +97,9 @@ type SheetsConnection struct {
 	SyncMode     string
 	LastSyncedAt pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
-	Version      int64
 	UpdatedAt    pgtype.Timestamptz
-	Deleted      bool
+	DeletedAt    pgtype.Timestamptz
+	Version      int64
 }
 
 type SyncQueue struct {
@@ -104,9 +111,9 @@ type SyncQueue struct {
 	AvailableAt pgtype.Timestamptz
 	MaxAttempts int32
 	CreatedAt   pgtype.Timestamptz
-	Version     int64
 	UpdatedAt   pgtype.Timestamptz
-	Deleted     bool
+	DeletedAt   pgtype.Timestamptz
+	Version     int64
 }
 
 type Transaction struct {
@@ -124,7 +131,9 @@ type Transaction struct {
 	LastModified pgtype.Timestamptz
 	Source       string
 	SheetsRowID  pgtype.Text
-	Deleted      bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
 }
 
 type TransactionSummary struct {
@@ -134,7 +143,9 @@ type TransactionSummary struct {
 	Type        string
 	TotalAmount pgtype.Numeric
 	Count       int64
+	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
 }
 
 type User struct {
@@ -143,7 +154,7 @@ type User struct {
 	DisplayName    pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
 	Version        int64
-	Deleted        bool
 	HashedPassword string
 }

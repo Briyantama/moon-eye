@@ -12,8 +12,8 @@ import (
 )
 
 const createRefreshToken = `-- name: CreateRefreshToken :exec
-INSERT INTO refresh_tokens (id, user_id, encrypted_token, expires_at, revoked, created_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO refresh_tokens (id, user_id, encrypted_token, expires_at, revoked, created_at, updated_at, deleted_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type CreateRefreshTokenParams struct {
@@ -23,6 +23,8 @@ type CreateRefreshTokenParams struct {
 	ExpiresAt      pgtype.Timestamptz
 	Revoked        bool
 	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
 }
 
 func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) error {
@@ -33,12 +35,14 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 		arg.ExpiresAt,
 		arg.Revoked,
 		arg.CreatedAt,
+		arg.UpdatedAt,
+		arg.DeletedAt,
 	)
 	return err
 }
 
 const getRefreshTokenByID = `-- name: GetRefreshTokenByID :one
-SELECT id, user_id, encrypted_token, expires_at, revoked, created_at
+SELECT id, user_id, encrypted_token, expires_at, revoked, created_at, updated_at, deleted_at
 FROM refresh_tokens
 WHERE id = $1
 `
@@ -53,15 +57,17 @@ func (q *Queries) GetRefreshTokenByID(ctx context.Context, id pgtype.UUID) (Refr
 		&i.ExpiresAt,
 		&i.Revoked,
 		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getRefreshTokensByUserID = `-- name: GetRefreshTokensByUserID :many
-SELECT id, user_id, encrypted_token, expires_at, revoked, created_at
+SELECT id, user_id, encrypted_token, expires_at, revoked, created_at, updated_at, deleted_at
 FROM refresh_tokens
 WHERE user_id = $1
-ORDER BY created_at DESC
+ORDER BY expires_at DESC, revoked, created_at DESC, id DESC
 `
 
 func (q *Queries) GetRefreshTokensByUserID(ctx context.Context, userID pgtype.UUID) ([]RefreshToken, error) {
@@ -80,6 +86,8 @@ func (q *Queries) GetRefreshTokensByUserID(ctx context.Context, userID pgtype.UU
 			&i.ExpiresAt,
 			&i.Revoked,
 			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -92,7 +100,7 @@ func (q *Queries) GetRefreshTokensByUserID(ctx context.Context, userID pgtype.UU
 }
 
 const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
-UPDATE refresh_tokens SET revoked = true WHERE id = $1
+UPDATE refresh_tokens SET revoked = true, updated_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) RevokeRefreshToken(ctx context.Context, id pgtype.UUID) error {

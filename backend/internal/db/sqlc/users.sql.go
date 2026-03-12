@@ -12,7 +12,7 @@ import (
 )
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO users (id, email, hashed_password, created_at, updated_at, deleted)
+INSERT INTO users (id, email, hashed_password, created_at, updated_at, deleted_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 `
 
@@ -22,7 +22,7 @@ type CreateUserParams struct {
 	HashedPassword string
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
-	Deleted        bool
+	DeletedAt      pgtype.Timestamptz
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -32,15 +32,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.HashedPassword,
 		arg.CreatedAt,
 		arg.UpdatedAt,
-		arg.Deleted,
+		arg.DeletedAt,
 	)
 	return err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, hashed_password, created_at, updated_at, deleted
+SELECT id, email, hashed_password, created_at, updated_at, deleted_at
 FROM users
-WHERE LOWER(email) = LOWER($1) AND deleted = false
+WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
 `
 
 type GetUserByEmailRow struct {
@@ -49,7 +49,7 @@ type GetUserByEmailRow struct {
 	HashedPassword string
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
-	Deleted        bool
+	DeletedAt      pgtype.Timestamptz
 }
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEmailRow, error) {
@@ -61,15 +61,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 		&i.HashedPassword,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Deleted,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, hashed_password, created_at, updated_at, deleted
+SELECT id, email, hashed_password, created_at, updated_at, deleted_at
 FROM users
-WHERE id = $1 AND deleted = false
+WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserByIDRow struct {
@@ -78,7 +78,7 @@ type GetUserByIDRow struct {
 	HashedPassword string
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
-	Deleted        bool
+	DeletedAt      pgtype.Timestamptz
 }
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error) {
@@ -90,15 +90,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 		&i.HashedPassword,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Deleted,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const updateUser = `-- name: UpdateUser :exec
 UPDATE users
-SET email = $2, hashed_password = $3, updated_at = $4, deleted = $5
-WHERE id = $1 AND deleted = false
+SET email = $2, hashed_password = $3, updated_at = $4, deleted_at = $5
+WHERE id = $1 AND deleted_at IS NULL
 `
 
 type UpdateUserParams struct {
@@ -106,7 +106,7 @@ type UpdateUserParams struct {
 	Email          string
 	HashedPassword string
 	UpdatedAt      pgtype.Timestamptz
-	Deleted        bool
+	DeletedAt      pgtype.Timestamptz
 }
 
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
@@ -115,7 +115,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 		arg.Email,
 		arg.HashedPassword,
 		arg.UpdatedAt,
-		arg.Deleted,
+		arg.DeletedAt,
 	)
 	return err
 }

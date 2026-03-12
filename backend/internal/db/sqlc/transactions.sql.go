@@ -15,7 +15,7 @@ const countTransactionsByUser = `-- name: CountTransactionsByUser :one
 SELECT COUNT(*)::bigint AS total
 FROM transactions
 WHERE user_id = $1
-  AND deleted = false
+  AND deleted_at IS NULL
 `
 
 // Count non-deleted transactions for a user.
@@ -41,13 +41,30 @@ INSERT INTO transactions (
   last_modified,
   source,
   sheets_row_id,
-  deleted
+  created_at,
+  updated_at,
+  deleted_at
 ) VALUES (
-  $1, $2, $3, $4, $5,
-  $6, $7, $8, $9,
-  $10, $11, $12, $13, $14
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 )
-RETURNING id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+RETURNING
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 `
 
 type CreateTransactionParams struct {
@@ -64,7 +81,9 @@ type CreateTransactionParams struct {
 	LastModified pgtype.Timestamptz
 	Source       string
 	SheetsRowID  pgtype.Text
-	Deleted      bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
 }
 
 // Create a new transaction for a user.
@@ -83,7 +102,9 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.LastModified,
 		arg.Source,
 		arg.SheetsRowID,
-		arg.Deleted,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+		arg.DeletedAt,
 	)
 	var i Transaction
 	err := row.Scan(
@@ -101,17 +122,36 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.LastModified,
 		&i.Source,
 		&i.SheetsRowID,
-		&i.Deleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getTransactionByID = `-- name: GetTransactionByID :one
-SELECT id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+SELECT
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 FROM transactions
 WHERE id = $1
   AND user_id = $2
-  AND deleted = false
+  AND deleted_at IS NULL
 `
 
 type GetTransactionByIDParams struct {
@@ -138,15 +178,35 @@ func (q *Queries) GetTransactionByID(ctx context.Context, arg GetTransactionByID
 		&i.LastModified,
 		&i.Source,
 		&i.SheetsRowID,
-		&i.Deleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getTransactionByIDOnly = `-- name: GetTransactionByIDOnly :one
-SELECT id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+SELECT
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 FROM transactions
 WHERE id = $1
+  AND deleted_at IS NULL
 `
 
 // Fetch a single transaction by id (for use inside tx when user_id not needed).
@@ -168,16 +228,130 @@ func (q *Queries) GetTransactionByIDOnly(ctx context.Context, id pgtype.UUID) (T
 		&i.LastModified,
 		&i.Source,
 		&i.SheetsRowID,
-		&i.Deleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
-const listTransactionsByUser = `-- name: ListTransactionsByUser :many
-SELECT id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+const listTransactionsByFilter = `-- name: ListTransactionsByFilter :many
+SELECT
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 FROM transactions
 WHERE user_id = $1
-  AND deleted = false
+  AND deleted_at IS NULL
+  AND ($2 = false OR account_id = $3)
+  AND ($4 = false OR type = $5)
+  AND ($6 = false OR occurred_at >= $7)
+  AND ($8 = false OR occurred_at <= $9)
+ORDER BY occurred_at DESC
+LIMIT $10 OFFSET $11
+`
+
+type ListTransactionsByFilterParams struct {
+	UserID       pgtype.UUID
+	Column2      interface{}
+	AccountID    pgtype.UUID
+	Column4      interface{}
+	Type         string
+	Column6      interface{}
+	OccurredAt   pgtype.Timestamptz
+	Column8      interface{}
+	OccurredAt_2 pgtype.Timestamptz
+	Limit        int32
+	Offset       int32
+}
+
+// List transactions for a user with optional filters.
+func (q *Queries) ListTransactionsByFilter(ctx context.Context, arg ListTransactionsByFilterParams) ([]Transaction, error) {
+	rows, err := q.db.Query(ctx, listTransactionsByFilter,
+		arg.UserID,
+		arg.Column2,
+		arg.AccountID,
+		arg.Column4,
+		arg.Type,
+		arg.Column6,
+		arg.OccurredAt,
+		arg.Column8,
+		arg.OccurredAt_2,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Transaction
+	for rows.Next() {
+		var i Transaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.AccountID,
+			&i.Amount,
+			&i.Currency,
+			&i.Type,
+			&i.CategoryID,
+			&i.Description,
+			&i.OccurredAt,
+			&i.Metadata,
+			&i.Version,
+			&i.LastModified,
+			&i.Source,
+			&i.SheetsRowID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTransactionsByUser = `-- name: ListTransactionsByUser :many
+SELECT
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
+FROM transactions
+WHERE user_id = $1
+  AND deleted_at IS NULL
 ORDER BY occurred_at DESC
 LIMIT $2 OFFSET $3
 `
@@ -213,7 +387,9 @@ func (q *Queries) ListTransactionsByUser(ctx context.Context, arg ListTransactio
 			&i.LastModified,
 			&i.Source,
 			&i.SheetsRowID,
-			&i.Deleted,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -228,13 +404,31 @@ func (q *Queries) ListTransactionsByUser(ctx context.Context, arg ListTransactio
 const softDeleteTransaction = `-- name: SoftDeleteTransaction :one
 UPDATE transactions
 SET
-  deleted       = true,
+  deleted_at    = NOW(),
   last_modified = now(),
-  version       = version + 1
+  version       = version + 1,
+  updated_at    = NOW()
 WHERE id = $1
   AND user_id = $2
-  AND deleted = false
-RETURNING id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+  AND deleted_at IS NULL
+RETURNING
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 `
 
 type SoftDeleteTransactionParams struct {
@@ -261,7 +455,9 @@ func (q *Queries) SoftDeleteTransaction(ctx context.Context, arg SoftDeleteTrans
 		&i.LastModified,
 		&i.Source,
 		&i.SheetsRowID,
-		&i.Deleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -269,12 +465,30 @@ func (q *Queries) SoftDeleteTransaction(ctx context.Context, arg SoftDeleteTrans
 const softDeleteTransactionByID = `-- name: SoftDeleteTransactionByID :one
 UPDATE transactions
 SET
-  deleted       = true,
+  deleted_at    = NOW(),
   last_modified = now(),
-  version       = version + 1
+  version       = version + 1,
+  updated_at    = NOW()
 WHERE id = $1
-  AND deleted = false
-RETURNING id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+  AND deleted_at IS NULL
+RETURNING
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 `
 
 // Soft-delete a transaction by id only (for use when user_id not in scope).
@@ -296,7 +510,9 @@ func (q *Queries) SoftDeleteTransactionByID(ctx context.Context, id pgtype.UUID)
 		&i.LastModified,
 		&i.Source,
 		&i.SheetsRowID,
-		&i.Deleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -315,10 +531,29 @@ SET
   last_modified = now(),
   source        = $11,
   sheets_row_id = $12,
-  version       = version + 1
+  version       = version + 1,
+  updated_at    = NOW()
 WHERE id = $1
   AND user_id = $2
-RETURNING id, user_id, account_id, amount, currency, type, category_id, description, occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
+  AND version = $13
+RETURNING
+  id,
+  user_id,
+  account_id,
+  amount,
+  currency,
+  type,
+  category_id,
+  description,
+  occurred_at,
+  metadata,
+  version,
+  last_modified,
+  source,
+  sheets_row_id,
+  created_at,
+  updated_at,
+  deleted_at
 `
 
 type UpdateTransactionParams struct {
@@ -334,6 +569,7 @@ type UpdateTransactionParams struct {
 	Metadata    []byte
 	Source      string
 	SheetsRowID pgtype.Text
+	Version     int64
 }
 
 // Update an existing transaction and bump the version.
@@ -351,6 +587,7 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 		arg.Metadata,
 		arg.Source,
 		arg.SheetsRowID,
+		arg.Version,
 	)
 	var i Transaction
 	err := row.Scan(
@@ -368,7 +605,9 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 		&i.LastModified,
 		&i.Source,
 		&i.SheetsRowID,
-		&i.Deleted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

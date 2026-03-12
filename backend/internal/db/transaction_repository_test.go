@@ -51,7 +51,9 @@ func TestCreateUpdateParams_Types(t *testing.T) {
 		LastModified: now,
 		Source:       "app",
 		SheetsRowID:  &rowID,
-		Deleted:      false,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		DeletedAt:    time.Time{},
 	}
 
 	update := UpdateTransactionParams{
@@ -67,6 +69,10 @@ func TestCreateUpdateParams_Types(t *testing.T) {
 		Metadata:    map[string]any{"key": "updated"},
 		Source:      "app",
 		SheetsRowID: &rowID,
+		Version:     2,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		DeletedAt:   time.Time{},
 	}
 
 	require.Equal(t, userID, create.UserID)

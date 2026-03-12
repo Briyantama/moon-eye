@@ -10,3 +10,4 @@ bin/
 .cursor/rules/
 nul
 .cursor/rules/golang-backend.mdc
+.txt

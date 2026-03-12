@@ -145,7 +145,14 @@ func newApp(ctx context.Context, logger *zap.Logger, cfg config.Config, dbPool *
 	sheetsConn := db.NewPGShedsConnectionRepository(dbPool)
 	sheetsMapping := db.NewPGSheetMappingRepository(dbPool)
 	changeEventReader := db.NewPGChangeEventReader(dbPool)
-	syncService := syncworker.NewSyncService(sheetsConn, sheetsMapping, changeEventReader, &syncworker.NoopSheetsClient{})
+	var sheetsClient syncworker.SheetsClient = &syncworker.NoopSheetsClient{}
+	if client, err := syncworker.NewGoogleSheetsClientFromEnv(ctx); err == nil && client != nil {
+		sheetsClient = client
+		logger.Info("Google Sheets client enabled (credentials from env)")
+	} else {
+		logger.Info("Google Sheets client not configured; using noop (set GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SHEETS_CREDENTIALS_JSON for real sync)")
+	}
+	syncService := syncworker.NewSyncService(sheetsConn, sheetsMapping, changeEventReader, sheetsClient)
 
 	handler := api.NewHandler(api.Services{
 		Transactions: transactionService,

@@ -2,6 +2,7 @@ package wiring
 
 import (
 	"context"
+	"time"
 
 	"github.com/gofrs/uuid"
 	"github.com/jackc/pgx/v5"
@@ -116,7 +117,9 @@ func dbTransactionToDomain(r *db.Transaction) domain.Transaction {
 		Version:      r.Version,
 		LastModified: r.LastModified,
 		Source:       r.Source,
-		Deleted:      r.Deleted,
+		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
+		DeletedAt:    r.DeletedAt,
 	}
 	if r.CategoryID != nil {
 		s := r.CategoryID.String()
@@ -127,6 +130,9 @@ func dbTransactionToDomain(r *db.Transaction) domain.Transaction {
 		out.SheetsRowID = r.SheetsRowID
 	}
 	out.Metadata = r.Metadata
+	out.CreatedAt = r.CreatedAt
+	out.UpdatedAt = r.UpdatedAt
+	out.DeletedAt = r.DeletedAt
 	return out
 }
 
@@ -161,7 +167,9 @@ func domainTransactionToCreateParams(tx *domain.Transaction) (db.CreateTransacti
 		LastModified: tx.LastModified,
 		Source:       tx.Source,
 		SheetsRowID:  tx.SheetsRowID,
-		Deleted:      tx.Deleted,
+		CreatedAt:    tx.OccurredAt,
+		UpdatedAt:    tx.LastModified,
+		DeletedAt:    time.Time{},
 	}, nil
 }
 
@@ -199,5 +207,6 @@ func domainTransactionToUpdateParams(tx *domain.Transaction) (db.UpdateTransacti
 		Metadata:    tx.Metadata,
 		Source:      tx.Source,
 		SheetsRowID: tx.SheetsRowID,
+		Version:     tx.Version,
 	}, nil
 }

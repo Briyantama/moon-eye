@@ -1,0 +1,41 @@
+Below are rules for identifying anti-pattern queries on .sql files:
+1. Query with sql_variant data type
+2. Query with Unicode data types like nchar and nvarchar as it take twice as much storage space compared to ASCII data types like char and varchar
+3. Query with BIT column only when multiple BITs in use
+4. Query using Varchar(max) only if data length > 8000
+5. Query with data less than 4, should use char / nchar
+6. Every tables should have a unique and unchangeable primary key.
+7. The primary key of a table should be a single column. Otherwise, it is an anti-pattern.
+8. The preferred data type of the primary key is UNIQUEIDENTIFIER. This guarantees uniqueness across servers and development environments. Uniqueidentifier a good compromise between performance and avoiding the potential management pitfalls. Otherwise, it is an anti-pattern. 
+9. Always access XML data type using the SQLXML data type, and NOT using a SQL String type variable. Otherwise, it is an anti-pattern. 
+10. Use Nullable column as per actual needs. By default, a column content should be Mandatory. Only if it is a business requirement that a column may be empty, it can be defined as Nullable. Otherwise, it is an anti-pattern. 
+11. Foreign key columns cannot be nullable. Otherwise, it is an anti-pattern.
+12. Columns used as search criteria should not be nullable. Otherwise, it is an anti-pattern.
+13. As a general rule, it is advised to NOT use any triggers. Any exception to this rule must be based on a business-critical requirement, and approved by the database administrator. Otherwise, it is an anti-pattern. 
+14. Queries must not use table name or column name using SQL reserved words
+15. Table must have index. Having no indexes means it is an anti-pattern.
+16. SQL query with no index supporting WHERE clause columns
+17. Table on DDL but not in use on any queries
+18. Usage of Unqualified joins
+19. Query using wildcard pattern (e.g. SELECT *)
+20. Query with SELECT statement without WHERE
+21. Query wuth SELECT statement with NOT, <>, != syntax
+22. Query with SELECT INTO statement with ORDER BY
+23. Query with SELECT TOP(1) statement without ORDER BY
+24. Query with SELECT statement to assign a variable
+25. Query with UPDATE statement but without WHERE
+26. Query with sp_ naming prefix
+27. Query with fn_ naming prefix
+28. Query with usage of function on column in predicate
+28. Query with usage of function on column in JOIN predicate
+28. Query with UDF usage in output list
+28. Query with usage of LIKE predicate with leading wildcard (%_)
+28. Query with SELECT table statement within a WHILE
+28. Query with INSERT statement without specifying column
+29. Query with unused input parameter
+29. Query with unused local variable
+29. Query with usage of query hint
+29. Query returning more than 200 records
+29. Query with usage of Dynamic SQL on application side
+29. Query with usage of View with ORDER BY
+30. Query with usage of CURSOR leads to RBAR behaviour

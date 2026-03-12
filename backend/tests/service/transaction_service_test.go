@@ -70,7 +70,7 @@ func (m *mockTransactionRepository) SoftDelete(ctx context.Context, userID, id s
 	if m.deleted == nil {
 		return nil, errors.New("no transaction to delete")
 	}
-	m.deleted.Deleted = true
+	m.deleted.DeletedAt = time.Now()
 	m.deleted.Version++
 	return m.deleted, nil
 }
@@ -231,7 +231,7 @@ func TestTransactionService_SoftDeleteTransaction_EmitsDeleteEventAndSync(t *tes
 	tx, err := svc.SoftDeleteTransaction(ctx, "user-1", "txn-1")
 	require.NoError(t, err)
 	require.NotNil(t, tx)
-	require.True(t, tx.Deleted)
+	require.False(t, tx.DeletedAt.IsZero())
 
 	require.Len(t, events.events, 1)
 	require.Equal(t, "delete", events.events[0].Operation)

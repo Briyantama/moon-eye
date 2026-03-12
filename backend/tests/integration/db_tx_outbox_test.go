@@ -17,8 +17,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"moon-eye/backend/internal/db"
-	"moon-eye/backend/internal/db/sqlc"
+	sqlcdb "moon-eye/backend/internal/db/sqlc"
 	service "moon-eye/backend/internal/service"
+	"moon-eye/backend/internal/service/projection"
 	"moon-eye/backend/internal/wiring"
 )
 
@@ -139,7 +140,7 @@ func TestTxOutbox_CreateTransaction_PersistsTransactionAndChangeEvent(t *testing
 	accountID := uuid.Must(uuid.FromString("550e8400-e29b-41d4-a716-446655440002"))
 	seedUserAndAccount(t, pool, userID, accountID)
 
-	queries := sqlc.New(pool)
+	queries := sqlcdb.New(pool)
 	repos := db.NewRepositories(pool, queries)
 	txRunner := db.NewTxRunner(pool)
 	txManager := wiring.NewTxManagerAdapter(txRunner, repos.Transactions, repos.ChangeEvents)
@@ -204,6 +205,90 @@ func TestTxOutbox_CreateTransaction_PersistsTransactionAndChangeEvent(t *testing
 	require.NotEmpty(t, payload)
 }
 
+// runProjectionOnce runs one batch of the projection: list events since 0, process with summary and balance projectors, advance cursor.
+func runProjectionOnce(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	source := projection.NewDBChangeEventSource(pool)
+	cursor := projection.NewDBCursorStore(pool)
+	summaryProjector := projection.NewTransactionSummaryProjector(pool)
+	balanceProjector := projection.NewMonthlyBalanceProjector(pool)
+	events, err := source.ListSince(ctx, 0, 50)
+	require.NoError(t, err)
+	if len(events) == 0 {
+		return
+	}
+	var maxID int64
+	for _, ev := range events {
+		require.NoError(t, summaryProjector.Process(ctx, ev))
+		require.NoError(t, balanceProjector.Process(ctx, ev))
+		if ev.ID > maxID {
+			maxID = ev.ID
+		}
+	}
+	require.NoError(t, cursor.Set(ctx, "test", maxID))
+}
+
+// TestTxOutbox_ProjectionUpdates_AfterCreateTransaction creates a transaction, runs projection once, then asserts transaction_summary and monthly_balance.
+func TestTxOutbox_ProjectionUpdates_AfterCreateTransaction(t *testing.T) {
+	if os.Getenv("INTEGRATION_DB") == "" {
+		t.Skip("integration test; set INTEGRATION_DB=1 to run")
+	}
+
+	_, dsn := setupPostgresContainer(t)
+	pool := setupDatabase(t, dsn)
+	runMigrations(t, pool)
+
+	userID := uuid.Must(uuid.FromString("550e8400-e29b-41d4-a716-446655440021"))
+	accountID := uuid.Must(uuid.FromString("550e8400-e29b-41d4-a716-446655440022"))
+	seedUserAndAccount(t, pool, userID, accountID)
+
+	queries := sqlcdb.New(pool)
+	repos := db.NewRepositories(pool, queries)
+	txRunner := db.NewTxRunner(pool)
+	txManager := wiring.NewTxManagerAdapter(txRunner, repos.Transactions, repos.ChangeEvents)
+	txRepo := wiring.NewServiceTransactionAdapter(repos.Transactions, nil)
+	changeEvents := service.NewDBChangeEventWriter(repos.ChangeEvents)
+	svc := service.NewTransactionService(txRepo, changeEvents, nil, txManager)
+
+	ctx := context.Background()
+	occ := time.Date(2025, 3, 15, 12, 0, 0, 0, time.UTC)
+	in := service.CreateTransactionInput{
+		UserID:     userID.String(),
+		AccountID:  accountID.String(),
+		Amount:     50,
+		Currency:   "USD",
+		Type:       "expense",
+		OccurredAt: occ,
+		Source:     "app",
+	}
+	txn, err := svc.CreateTransaction(ctx, in)
+	require.NoError(t, err)
+	require.NotNil(t, txn)
+
+	runProjectionOnce(t, ctx, pool)
+
+	periodKey := "2025-03"
+	var summaryCount int
+	var totalAmount float64
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(total_amount), 0) FROM transaction_summary WHERE user_id = $1 AND period_key = $2 AND currency = 'USD' AND type = 'expense'`,
+		userID, periodKey,
+	).Scan(&summaryCount, &totalAmount)
+	require.NoError(t, err)
+	require.Equal(t, 1, summaryCount, "transaction_summary should have one row for user/period/currency/type")
+	require.Equal(t, 50.0, totalAmount)
+
+	var balanceCount int
+	var balance float64
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(balance), 0) FROM monthly_balance WHERE user_id = $1 AND account_id = $2 AND month_key = $3`,
+		userID, accountID, periodKey,
+	).Scan(&balanceCount, &balance)
+	require.NoError(t, err)
+	require.Equal(t, 1, balanceCount, "monthly_balance should have one row")
+	require.Equal(t, 50.0, balance)
+}
+
 // failingChangeEventRepo wraps a ChangeEventRepository and always returns an error on Insert.
 type failingChangeEventRepo struct {
 	db.ChangeEventRepository
@@ -229,7 +314,7 @@ func TestTxOutbox_CreateTransaction_RollbackOnChangeEventFailure(t *testing.T) {
 	accountID := uuid.Must(uuid.FromString("550e8400-e29b-41d4-a716-446655440012"))
 	seedUserAndAccount(t, pool, userID, accountID)
 
-	queries := sqlc.New(pool)
+	queries := sqlcdb.New(pool)
 	repos := db.NewRepositories(pool, queries)
 	txRunner := db.NewTxRunner(pool)
 	// Use a change event repo that always fails on Insert so the transaction rolls back.

@@ -24,7 +24,9 @@ type Transaction struct {
 	LastModified time.Time
 	Source       string
 	SheetsRowID  *string
-	Deleted      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeletedAt    time.Time
 }
 
 // CreateTransactionParams captures the fields required to insert a new
@@ -43,7 +45,9 @@ type CreateTransactionParams struct {
 	LastModified time.Time
 	Source       string
 	SheetsRowID  *string
-	Deleted      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeletedAt    time.Time
 }
 
 // UpdateTransactionParams captures updatable fields for an existing transaction.
@@ -61,6 +65,10 @@ type UpdateTransactionParams struct {
 	Metadata    map[string]any
 	Source      string
 	SheetsRowID *string
+	Version     int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	DeletedAt   time.Time
 }
 
 // TransactionFilter provides a rich filter surface for listing transactions.

@@ -1,4 +1,6 @@
-package db_test
+//go:build integration
+
+package integration_test
 
 import (
 	"context"

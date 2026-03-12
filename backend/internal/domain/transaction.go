@@ -19,6 +19,8 @@ type Transaction struct {
 	LastModified time.Time
 	Source       string
 	SheetsRowID  *string
-	Deleted      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeletedAt    time.Time
 }
 

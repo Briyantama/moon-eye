@@ -152,34 +152,21 @@ func (s *SyncService) SyncUserTransactions(
 		})
 	}
 
-	// Fetch remote changes for conflict detection.
+	// Fetch remote changes for two-way merge.
 	changes, _, err := s.sheets.FetchChanges(ctx, *conn, "")
 	if err != nil {
 		return err
 	}
 
-	// Conflict resolution: build a set of local RowIDs and versions. When merging with remote,
-	// prefer local when version is higher (or same RowID already in local = local wins).
-	localByRow := make(map[string]int64)
-	for _, ev := range localEvents {
-		if ev.Version > localByRow[ev.EntityID] {
-			localByRow[ev.EntityID] = ev.Version
-		}
-	}
+	// Two-way merge: version wins first, then LastModified (createdAt). Idempotent: same inputs => same merged output.
+	merged := MergeSheetRows(localChanges, changes.Remote)
+	_ = mode
 
-	// Apply local changes first (idempotent: same RowID + payload => same sheet state).
-	if len(localChanges) > 0 {
-		if err := s.sheets.ApplyChanges(ctx, *conn, localChanges); err != nil {
+	if len(merged) > 0 {
+		if err := s.sheets.ApplyChanges(ctx, *conn, merged); err != nil {
 			return err
 		}
 	}
-
-	// Two-way mode: apply remote changes that do not conflict (no local change for that row, or remote newer).
-	_ = mode
-	_ = changes
-	_ = localByRow
-	// TODO(two-way): iterate changes.Remote; for each row, if localByRow[row.RowID] is 0 or remote is newer, apply remote.
-
 	return nil
 }
 

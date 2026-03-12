@@ -7,6 +7,7 @@ import (
 
 	"github.com/gofrs/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	sqlcdb "moon-eye/backend/internal/db/sqlc"
@@ -53,7 +54,6 @@ func (r *PGXTransactionRepository) Create(ctx context.Context, tx pgx.Tx, params
 	if err != nil {
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
-
 	amount, err := pgtypex.NumericFromFloat64(params.Amount)
 	if err != nil {
 		return nil, fmt.Errorf("convert amount: %w", err)
@@ -74,7 +74,18 @@ func (r *PGXTransactionRepository) Create(ctx context.Context, tx pgx.Tx, params
 	if err != nil {
 		return nil, fmt.Errorf("convert sheets_row_id: %w", err)
 	}
-
+	createdAt, err := pgtypex.TimestamptzFromTime(params.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("convert created_at: %w", err)
+	}
+	updatedAt, err := pgtypex.TimestamptzFromTime(params.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("convert updated_at: %w", err)
+	}
+	deletedAt, err := pgtypex.TimestamptzFromTime(params.DeletedAt)
+	if err != nil {
+		return nil, fmt.Errorf("convert deleted_at: %w", err)
+	}
 	arg := sqlcdb.CreateTransactionParams{
 		UserID:       uuidx.UUIDToPG(params.UserID),
 		AccountID:    uuidx.UUIDToPG(params.AccountID),
@@ -89,13 +100,31 @@ func (r *PGXTransactionRepository) Create(ctx context.Context, tx pgx.Tx, params
 		LastModified: lastModified,
 		Source:       params.Source,
 		SheetsRowID:  sheetsRowID,
-		Deleted:      params.Deleted,
+		CreatedAt:    createdAt,
+		UpdatedAt:    updatedAt,
+		DeletedAt:    deletedAt,
 	}
 	row, err := r.q(tx).CreateTransaction(ctx, arg)
 	if err != nil {
 		return nil, fmt.Errorf("create transaction: %w", err)
 	}
-	return sqlcTransactionToDB(&row)
+	return sqlcTransactionToDB(&sqlcdb.Transaction{
+		ID:           row.ID,
+		UserID:       row.UserID,
+		AccountID:    row.AccountID,
+		Amount:       row.Amount,
+		Currency:     row.Currency,
+		Type:         row.Type,
+		CategoryID:   row.CategoryID,
+		Description:  row.Description,
+		OccurredAt:   row.OccurredAt,
+		Metadata:     row.Metadata,
+		Version:      row.Version,
+		LastModified: row.LastModified,
+		Source:       row.Source,
+		SheetsRowID:  row.SheetsRowID,
+		DeletedAt:    row.DeletedAt,
+	})
 }
 
 // GetByID returns a single transaction by its ID (no user filter).
@@ -116,100 +145,65 @@ func (r *PGXTransactionRepository) List(ctx context.Context, tx pgx.Tx, filter T
 	if filter.Offset < 0 {
 		filter.Offset = 0
 	}
-	hasExtra := filter.AccountID != nil || filter.Type != nil ||
-		filter.FromOccurredAt != nil || filter.ToOccurredAt != nil
-	if !hasExtra {
-		rows, err := r.q(tx).ListTransactionsByUser(ctx, sqlcdb.ListTransactionsByUserParams{
-			UserID: uuidx.UUIDToPG(filter.UserID),
-			Limit:  int32(filter.Limit),
-			Offset: int32(filter.Offset),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list transactions: %w", err)
-		}
-		out := make([]Transaction, 0, len(rows))
-		for i := range rows {
-			t, err := sqlcTransactionToDB(&rows[i])
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, *t)
-		}
-		return out, nil
+	// Use a single sqlc query with optional filters instead of dynamic SQL.
+	rows, err := r.q(tx).ListTransactionsByFilter(ctx, toListFilterParams(filter))
+	if err != nil {
+		return nil, fmt.Errorf("list transactions: %w", err)
 	}
-	return r.listWithFilters(ctx, tx, filter)
+	out := make([]Transaction, 0, len(rows))
+	for i := range rows {
+		t, err := sqlcTransactionToDB(&rows[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, nil
 }
 
-// listWithFilters runs a dynamic query when optional filters are present.
-func (r *PGXTransactionRepository) listWithFilters(ctx context.Context, tx pgx.Tx, filter TransactionFilter) ([]Transaction, error) {
-	base := `
-SELECT id, user_id, account_id, amount, currency, type, category_id, description,
-       occurred_at, metadata, version, last_modified, source, sheets_row_id, deleted
-FROM transactions
-WHERE user_id = $1 AND deleted = false
-`
-	args := []any{filter.UserID}
-	pos := 2
+// toListFilterParams converts a TransactionFilter into sqlc ListTransactionsByFilterParams.
+func toListFilterParams(filter TransactionFilter) sqlcdb.ListTransactionsByFilterParams {
+	var (
+		hasAccount   bool
+		hasType      bool
+		hasFrom      bool
+		hasTo        bool
+		accountID    pgtype.UUID
+		typ          string
+		fromOccurred pgtype.Timestamptz
+		toOccurred   pgtype.Timestamptz
+	)
+
 	if filter.AccountID != nil {
-		base += fmt.Sprintf(" AND account_id = $%d", pos)
-		args = append(args, *filter.AccountID)
-		pos++
+		hasAccount = true
+		accountID = uuidx.UUIDToPG(*filter.AccountID)
 	}
 	if filter.Type != nil {
-		base += fmt.Sprintf(" AND type = $%d", pos)
-		args = append(args, *filter.Type)
-		pos++
+		hasType = true
+		typ = *filter.Type
 	}
 	if filter.FromOccurredAt != nil {
-		base += fmt.Sprintf(" AND occurred_at >= $%d", pos)
-		args = append(args, *filter.FromOccurredAt)
-		pos++
+		hasFrom = true
+		fromOccurred, _ = pgtypex.TimestamptzFromTime(*filter.FromOccurredAt)
 	}
 	if filter.ToOccurredAt != nil {
-		base += fmt.Sprintf(" AND occurred_at <= $%d", pos)
-		args = append(args, *filter.ToOccurredAt)
-		pos++
+		hasTo = true
+		toOccurred, _ = pgtypex.TimestamptzFromTime(*filter.ToOccurredAt)
 	}
-	base += " ORDER BY occurred_at DESC"
-	base += fmt.Sprintf(" LIMIT $%d OFFSET $%d", pos, pos+1)
-	args = append(args, filter.Limit, filter.Offset)
 
-	var run func(context.Context, string, ...any) (pgx.Rows, error)
-	if tx != nil {
-		run = tx.Query
-	} else {
-		run = r.pool.Query
+	return sqlcdb.ListTransactionsByFilterParams{
+		UserID:       uuidx.UUIDToPG(filter.UserID),
+		Column2:      hasAccount,
+		AccountID:    accountID,
+		Column4:      hasType,
+		Type:         typ,
+		Column6:      hasFrom,
+		OccurredAt:   fromOccurred,
+		Column8:      hasTo,
+		OccurredAt_2: toOccurred,
+		Limit:        int32(filter.Limit),
+		Offset:       int32(filter.Offset),
 	}
-	rows, err := run(ctx, base, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query transactions: %w", err)
-	}
-	defer rows.Close()
-
-	var result []Transaction
-	for rows.Next() {
-		var rec Transaction
-		var rawMeta []byte
-		var categoryID *uuid.UUID
-		if err := rows.Scan(
-			&rec.ID, &rec.UserID, &rec.AccountID, &rec.Amount, &rec.Currency, &rec.Type,
-			&categoryID, &rec.Description, &rec.OccurredAt, &rawMeta,
-			&rec.Version, &rec.LastModified, &rec.Source, &rec.SheetsRowID, &rec.Deleted,
-		); err != nil {
-			return nil, fmt.Errorf("scan transaction row: %w", err)
-		}
-		rec.CategoryID = categoryID
-		if len(rawMeta) > 0 {
-			if err := json.Unmarshal(rawMeta, &rec.Metadata); err != nil {
-				return nil, fmt.Errorf("unmarshal metadata: %w", err)
-			}
-		}
-		result = append(result, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate transactions: %w", err)
-	}
-	return result, nil
 }
 
 // Update performs a full update of a transaction row and returns the updated record.
@@ -249,6 +243,7 @@ func (r *PGXTransactionRepository) Update(ctx context.Context, tx pgx.Tx, params
 		Metadata:    metaBytes,
 		Source:      params.Source,
 		SheetsRowID: sheetsRowID,
+		Version:     params.Version,
 	}
 	row, err := r.q(tx).UpdateTransaction(ctx, arg)
 	if err != nil {
@@ -280,12 +275,10 @@ func sqlcTransactionToDB(t *sqlcdb.Transaction) (*Transaction, error) {
 	if err != nil {
 		return nil, fmt.Errorf("convert account_id: %w", err)
 	}
-
 	amount, err := pgtypex.Float64FromNumeric(t.Amount)
 	if err != nil {
 		return nil, fmt.Errorf("convert amount: %w", err)
 	}
-
 	categoryID, err := uuidx.PGToUUIDPtr(t.CategoryID)
 	if err != nil {
 		return nil, fmt.Errorf("convert category_id: %w", err)
@@ -295,7 +288,9 @@ func sqlcTransactionToDB(t *sqlcdb.Transaction) (*Transaction, error) {
 	occurredAt := pgtypex.TimeFromTimestamptz(t.OccurredAt)
 	lastModified := pgtypex.TimeFromTimestamptz(t.LastModified)
 	sheetsRowID := pgtypex.StringPtrFromText(t.SheetsRowID)
-
+	createdAt := pgtypex.TimeFromTimestamptz(t.CreatedAt)
+	updatedAt := pgtypex.TimeFromTimestamptz(t.UpdatedAt)
+	deletedAt := pgtypex.TimeFromTimestamptz(t.DeletedAt)
 	out := &Transaction{
 		ID:           id,
 		UserID:       userID,
@@ -310,7 +305,9 @@ func sqlcTransactionToDB(t *sqlcdb.Transaction) (*Transaction, error) {
 		LastModified: lastModified,
 		Source:       t.Source,
 		SheetsRowID:  sheetsRowID,
-		Deleted:      t.Deleted,
+		CreatedAt:    createdAt,
+		UpdatedAt:    updatedAt,
+		DeletedAt:    deletedAt,
 	}
 
 	if len(t.Metadata) > 0 {

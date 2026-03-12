@@ -6,9 +6,11 @@ INSERT INTO change_events (
   op_type,
   version,
   payload,
-  created_at
+  created_at,
+  updated_at,
+  deleted_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, NOW()
+  $1, $2, $3, $4, $5, $6, NOW(), NOW(), NULL
 );
 
 -- name: ListChangeEvents :many
@@ -20,7 +22,9 @@ SELECT
   op_type,
   version,
   payload,
-  created_at
+  created_at,
+  updated_at,
+  deleted_at
 FROM change_events
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2;
@@ -34,7 +38,9 @@ SELECT
   op_type,
   version,
   payload,
-  created_at
+  created_at,
+  updated_at,
+  deleted_at
 FROM change_events
 WHERE id = $1;
 

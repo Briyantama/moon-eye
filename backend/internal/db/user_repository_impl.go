@@ -46,13 +46,15 @@ func (r *PGXUserRepository) Create(ctx context.Context, tx pgx.Tx, user User) er
 		return fmt.Errorf("updated_at: %w", err)
 	}
 	q := r.queries(tx)
+	var deletedAt pgtype.Timestamptz
+	// for now we create users as non-deleted; DeletedAt stays NULL
 	err = q.CreateUser(ctx, sqlcdb.CreateUserParams{
 		ID:             uuidx.UUIDToPG(user.ID),
 		Email:          user.Email,
 		HashedPassword: user.HashedPassword,
 		CreatedAt:      createdAt,
 		UpdatedAt:      updatedAt,
-		Deleted:        user.Deleted,
+		DeletedAt:      deletedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -68,7 +70,7 @@ func (r *PGXUserRepository) GetByEmail(ctx context.Context, email string) (*User
 		}
 		return nil, fmt.Errorf("get user by email: %w", err)
 	}
-	return sqlcRowToUser(row.ID, row.Email, row.HashedPassword, row.CreatedAt, row.UpdatedAt, row.Deleted), nil
+	return sqlcRowToUser(row.ID, row.Email, row.HashedPassword, row.CreatedAt, row.UpdatedAt, row.DeletedAt), nil
 }
 
 func (r *PGXUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*User, error) {
@@ -79,7 +81,7 @@ func (r *PGXUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*User, e
 		}
 		return nil, fmt.Errorf("get user by id: %w", err)
 	}
-	return sqlcRowToUser(row.ID, row.Email, row.HashedPassword, row.CreatedAt, row.UpdatedAt, row.Deleted), nil
+	return sqlcRowToUser(row.ID, row.Email, row.HashedPassword, row.CreatedAt, row.UpdatedAt, row.DeletedAt), nil
 }
 
 func (r *PGXUserRepository) Update(ctx context.Context, tx pgx.Tx, user User) error {
@@ -88,12 +90,19 @@ func (r *PGXUserRepository) Update(ctx context.Context, tx pgx.Tx, user User) er
 		return fmt.Errorf("updated_at: %w", err)
 	}
 	q := r.queries(tx)
+	var deletedAt pgtype.Timestamptz
+	if user.Deleted {
+		// mark as soft-deleted using current time
+		if ts, convErr := pgtypex.TimestamptzFromTime(user.UpdatedAt); convErr == nil {
+			deletedAt = ts
+		}
+	}
 	err = q.UpdateUser(ctx, sqlcdb.UpdateUserParams{
-		ID:            uuidx.UUIDToPG(user.ID),
-		Email:         user.Email,
+		ID:             uuidx.UUIDToPG(user.ID),
+		Email:          user.Email,
 		HashedPassword: user.HashedPassword,
-		UpdatedAt:     updatedAt,
-		Deleted:       user.Deleted,
+		UpdatedAt:      updatedAt,
+		DeletedAt:      deletedAt,
 	})
 	if err != nil {
 		return fmt.Errorf("update user: %w", err)
@@ -101,8 +110,12 @@ func (r *PGXUserRepository) Update(ctx context.Context, tx pgx.Tx, user User) er
 	return nil
 }
 
-func sqlcRowToUser(id pgtype.UUID, email, hashedPassword string, createdAt, updatedAt pgtype.Timestamptz, deleted bool) *User {
-	u := &User{Email: email, HashedPassword: hashedPassword, Deleted: deleted}
+func sqlcRowToUser(id pgtype.UUID, email, hashedPassword string, createdAt, updatedAt, deletedAt pgtype.Timestamptz) *User {
+	u := &User{
+		Email:          email,
+		HashedPassword: hashedPassword,
+		Deleted:        deletedAt.Valid,
+	}
 	u.ID, _ = uuidx.PGToUUID(id)
 	u.CreatedAt = pgtypex.TimeFromTimestamptz(createdAt)
 	u.UpdatedAt = pgtypex.TimeFromTimestamptz(updatedAt)
